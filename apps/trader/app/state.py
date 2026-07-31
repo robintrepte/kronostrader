@@ -23,6 +23,17 @@ class RuntimeState:
         self._local_positions: dict[str, float] = {}
         self._local_avg: dict[str, float] = {}
 
+    def sync_symbols(self, symbols: list[str]) -> None:
+        for s in symbols:
+            self.candles.setdefault(s, [])
+            self.forecasts.setdefault(s, None)
+        remove = [k for k in self.candles if k not in symbols]
+        for k in remove:
+            self.candles.pop(k, None)
+            self.forecasts.pop(k, None)
+        if self.selected_symbol not in symbols:
+            self.selected_symbol = symbols[0] if symbols else "AAPL"
+
     def add_activity(self, kind: str, message: str, symbol: str | None = None, meta: dict | None = None) -> dict:
         entry = {
             "id": str(uuid4()),
@@ -37,8 +48,9 @@ class RuntimeState:
         return entry
 
     def snapshot(self) -> dict[str, Any]:
+        s = self.settings
         return {
-            "symbols": self.settings.symbols,
+            "symbols": s.symbols,
             "selectedSymbol": self.selected_symbol,
             "candles": self.candles,
             "forecasts": self.forecasts,
@@ -47,13 +59,20 @@ class RuntimeState:
             "equity": self.equity[-200:],
             "activity": self.activity[:100],
             "risk": {
-                "maxPositionSize": self.settings.max_position_size,
-                "maxPortfolioExposure": self.settings.max_portfolio_exposure,
-                "stopLossPct": self.settings.stop_loss_pct,
+                "maxPositionSize": s.max_position_size,
+                "maxPortfolioExposure": s.max_portfolio_exposure,
+                "stopLossPct": s.stop_loss_pct,
             },
-            "paper": self.settings.use_paper,
-            "dryRun": self.settings.dry_run,
-            "live": self.settings.live_trading_enabled,
+            "paper": s.use_paper,
+            "dryRun": s.dry_run,
+            "live": s.live_trading_enabled,
+            "strategy": s.strategy,
+            "signalThresholdPct": s.signal_threshold_pct,
+            "tradeIntervalSeconds": s.trade_interval_seconds,
+            "barTimeframe": s.bar_timeframe,
+            "lookbackBars": s.lookback_bars,
+            "predLen": s.pred_len,
+            "mockMarketData": s.mock_market_data,
         }
 
 

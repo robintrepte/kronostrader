@@ -111,6 +111,35 @@ export interface RiskLimits {
   stopLossPct: number;
 }
 
+export interface TraderSettings {
+  symbols: string[];
+  dryRun: boolean;
+  paper: boolean;
+  live: boolean;
+  strategy: string;
+  signalThresholdPct: number;
+  tradeIntervalSeconds: number;
+  barTimeframe: string;
+  lookbackBars: number;
+  predLen: number;
+  mockMarketData: boolean;
+  risk: RiskLimits;
+  updatedAt?: string;
+}
+
+export interface SettingsPatch {
+  symbols?: string[];
+  dryRun?: boolean;
+  strategy?: string;
+  signalThresholdPct?: number;
+  tradeIntervalSeconds?: number;
+  barTimeframe?: string;
+  lookbackBars?: number;
+  predLen?: number;
+  mockMarketData?: boolean;
+  risk?: Partial<RiskLimits>;
+}
+
 export interface Snapshot {
   symbols: string[];
   selectedSymbol: string;
@@ -124,6 +153,13 @@ export interface Snapshot {
   paper: boolean;
   dryRun: boolean;
   live: boolean;
+  strategy?: string;
+  signalThresholdPct?: number;
+  tradeIntervalSeconds?: number;
+  barTimeframe?: string;
+  lookbackBars?: number;
+  predLen?: number;
+  mockMarketData?: boolean;
 }
 
 export type WsEventType =

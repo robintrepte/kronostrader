@@ -4,9 +4,10 @@ import asyncio
 import json
 import logging
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from typing import AsyncIterator
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.bus import bus
@@ -14,6 +15,7 @@ from app.config import get_settings
 from app.db.session import init_db
 from app.logging_setup import setup_logging
 from app.loop import trading_loop
+from app.settings_api import SettingsPatch, apply_settings_patch, settings_public
 from app.state import get_state
 
 logger = logging.getLogger(__name__)
@@ -54,7 +56,7 @@ app.add_middleware(
 
 @app.get("/health")
 async def health():
-    settings = get_settings()
+    settings = get_state().settings
     return {
         "status": "ok",
         "paper": settings.use_paper,
@@ -67,6 +69,38 @@ async def health():
 @app.get("/api/snapshot")
 async def snapshot():
     return get_state().snapshot()
+
+
+@app.get("/api/settings")
+async def get_trader_settings():
+    return settings_public(get_state().settings)
+
+
+@app.patch("/api/settings")
+async def patch_trader_settings(patch: SettingsPatch):
+    state = get_state()
+    try:
+        result = apply_settings_patch(state, patch)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    if result["changed"]:
+        entry = state.add_activity(
+            "system",
+            f"Settings updated: {', '.join(result['changed'])}",
+        )
+        await bus.publish(
+            {"type": "activity", "timestamp": entry["timestamp"], "payload": entry}
+        )
+        snap = state.snapshot()
+        await bus.publish(
+            {
+                "type": "snapshot",
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "payload": snap,
+            }
+        )
+    return result
 
 
 @app.websocket("/ws")

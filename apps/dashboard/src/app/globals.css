@@ -1,7 +1,8 @@
 @import "tailwindcss";
 @import "@kronos/ui/styles.css";
 
-:root {
+:root,
+[data-theme="dark"] {
   --background: #0b0e14;
   --foreground: #e8ecf1;
   --panel: #12161f;
@@ -10,6 +11,37 @@
   --coral: #ff5c5c;
   --gold: #d4a54a;
   --muted: #8b949e;
+  --input: #0f131a;
+  --kronos-bg: #0b0e14;
+  --kronos-panel: #12161f;
+  --kronos-border: #1f2530;
+  --kronos-mint: #3ddc97;
+  --kronos-coral: #ff5c5c;
+  --kronos-gold: #d4a54a;
+  --kronos-text: #e8ecf1;
+  --kronos-muted: #8b949e;
+  color-scheme: dark;
+}
+
+[data-theme="light"] {
+  --background: #eef1f6;
+  --foreground: #12161f;
+  --panel: #ffffff;
+  --border: #d5dbe6;
+  --mint: #0f9f6e;
+  --coral: #e03e3e;
+  --gold: #a67c2d;
+  --muted: #5c6675;
+  --input: #f5f7fa;
+  --kronos-bg: #eef1f6;
+  --kronos-panel: #ffffff;
+  --kronos-border: #d5dbe6;
+  --kronos-mint: #0f9f6e;
+  --kronos-coral: #e03e3e;
+  --kronos-gold: #a67c2d;
+  --kronos-text: #12161f;
+  --kronos-muted: #5c6675;
+  color-scheme: light;
 }
 
 @theme inline {
@@ -38,8 +70,8 @@ body {
 body {
   margin: 0;
   background:
-    radial-gradient(1200px 600px at 10% -10%, #152033 0%, transparent 55%),
-    radial-gradient(900px 500px at 90% 0%, #1a1510 0%, transparent 50%),
+    radial-gradient(1200px 600px at 10% -10%, color-mix(in srgb, var(--gold) 12%, transparent) 0%, transparent 55%),
+    radial-gradient(900px 500px at 90% 0%, color-mix(in srgb, var(--mint) 8%, transparent) 0%, transparent 50%),
     var(--background);
   color: var(--foreground);
   font-family: var(--font-body), Inter, sans-serif;
@@ -53,4 +85,56 @@ h3 {
 
 .mono {
   font-family: var(--font-mono-jb), "JetBrains Mono", ui-monospace, monospace;
+}
+
+.desk-input {
+  width: 100%;
+  min-height: 40px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--input);
+  color: var(--foreground);
+  padding: 8px 10px;
+  font-family: var(--font-mono-jb), ui-monospace, monospace;
+  font-size: 12px;
+}
+
+.desk-input:focus {
+  outline: 2px solid color-mix(in srgb, var(--gold) 45%, transparent);
+  outline-offset: 1px;
+}
+
+.desk-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 36px;
+  min-width: 36px;
+  padding: 6px 12px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--foreground);
+  font-family: var(--font-mono-jb), ui-monospace, monospace;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.desk-btn:hover {
+  border-color: var(--gold);
+}
+
+.desk-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.desk-btn-primary {
+  background: color-mix(in srgb, var(--gold) 18%, var(--panel));
+  border-color: color-mix(in srgb, var(--gold) 55%, var(--border));
+  color: var(--foreground);
 }

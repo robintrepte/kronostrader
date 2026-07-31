@@ -357,14 +357,28 @@ async def refresh_equity(settings: Settings, broker: Broker) -> None:
 
 
 async def trading_loop(settings: Settings) -> None:
-    broker = Broker(settings)
     state = get_state()
+    # Prefer the shared runtime settings object so PATCH /api/settings takes effect.
+    settings = state.settings
+    broker = Broker(settings)
+    last_dry = settings.dry_run
     state.add_activity(
         "system",
         f"Trader started (paper={settings.use_paper}, dry_run={settings.dry_run}, live={settings.live_trading_enabled})",
     )
     while True:
-        for symbol in settings.symbols:
+        settings = state.settings
+        if settings.dry_run != last_dry:
+            broker = Broker(settings)
+            last_dry = settings.dry_run
+            entry = state.add_activity(
+                "system",
+                f"Broker reinitialized (dry_run={settings.dry_run})",
+            )
+            await bus.publish(
+                {"type": "activity", "timestamp": entry["timestamp"], "payload": entry}
+            )
+        for symbol in list(settings.symbols):
             try:
                 await process_symbol(settings, broker, symbol)
             except Exception:
@@ -375,4 +389,4 @@ async def trading_loop(settings: Settings) -> None:
             await refresh_equity(settings, broker)
         except Exception:
             logger.exception("Equity refresh failed")
-        await asyncio.sleep(settings.trade_interval_seconds)
+        await asyncio.sleep(max(5, settings.trade_interval_seconds))
