@@ -7,7 +7,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from typing import AsyncIterator
 
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.bus import bus
@@ -17,6 +17,8 @@ from app.logging_setup import setup_logging
 from app.loop import trading_loop
 from app.settings_api import SettingsPatch, apply_settings_patch, settings_public
 from app.state import get_state
+from app.symbol_search import search_symbols
+from app.system_status import build_system_status
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +30,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     await init_db()
     await bus.connect()
     get_state()  # init
+    from app.forecast_history import load_forecast_history
+
+    await load_forecast_history()
     task = asyncio.create_task(trading_loop(settings), name="trading-loop")
     logger.info(
         "Trader API up on %s:%s (symbols=%s)",
@@ -69,6 +74,25 @@ async def health():
 @app.get("/api/snapshot")
 async def snapshot():
     return get_state().snapshot()
+
+
+@app.get("/api/status")
+async def system_status():
+    return await build_system_status()
+
+
+@app.get("/api/symbols/search")
+async def symbols_search(
+    q: str = Query("", max_length=32),
+    limit: int = Query(12, ge=1, le=30),
+    exclude: str = Query("", description="Comma-separated tickers to hide"),
+):
+    settings = get_state().settings
+    excluded = {s.strip().upper() for s in exclude.split(",") if s.strip()}
+    results = await asyncio.to_thread(
+        search_symbols, settings, q, limit=limit, exclude=excluded
+    )
+    return {"query": q.strip().upper(), "results": results}
 
 
 @app.get("/api/settings")

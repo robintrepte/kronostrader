@@ -9,14 +9,102 @@ import {
   type PointerEvent as ReactPointerEvent,
   type WheelEvent as ReactWheelEvent,
 } from "react";
-import type { Candle, ForecastPoint } from "@kronos/shared-types";
+import type {
+  Candle,
+  ForecastHistoryEntry,
+  ForecastPoint,
+} from "@kronos/shared-types";
 
 const DEFAULT_VISIBLE = 120;
 const MIN_VISIBLE = 20;
+const HISTORY_DRAW_LIMIT = 16;
+
+function tsMs(value: string): number {
+  return new Date(value).getTime();
+}
+
+/** Map a timestamp onto the candle slot axis (linear between neighbors). */
+function xForTime(
+  t: number,
+  candleTimes: number[],
+  xCandle: (i: number) => number,
+): number | null {
+  if (!candleTimes.length) return null;
+  if (t < candleTimes[0] || t > candleTimes[candleTimes.length - 1]) {
+    // allow slight extrapolation past last candle for still-open forecast tips
+    if (t > candleTimes[candleTimes.length - 1] && candleTimes.length >= 2) {
+      const i = candleTimes.length - 1;
+      const dt = candleTimes[i] - candleTimes[i - 1] || 1;
+      const frac = (t - candleTimes[i]) / dt;
+      if (frac > 2) return null;
+      return xCandle(i) + frac * (xCandle(i) - xCandle(i - 1));
+    }
+    return null;
+  }
+  let lo = 0;
+  let hi = candleTimes.length - 1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    const v = candleTimes[mid];
+    if (v === t) return xCandle(mid);
+    if (v < t) lo = mid + 1;
+    else hi = mid - 1;
+  }
+  const i1 = Math.max(1, lo);
+  const i0 = i1 - 1;
+  const t0 = candleTimes[i0];
+  const t1 = candleTimes[i1];
+  const frac = t1 === t0 ? 0 : (t - t0) / (t1 - t0);
+  return xCandle(i0) + frac * (xCandle(i1) - xCandle(i0));
+}
+
+export function forecastAccuracy(
+  history: ForecastHistoryEntry[],
+  candles: Candle[],
+): { samples: number; maePct: number; mapeHint: string } | null {
+  if (!history.length || !candles.length) return null;
+  const byTs = new Map(candles.map((c) => [tsMs(c.timestamp), c.close]));
+  // allow ±1 bar match within 2 minutes for timestamp drift
+  const closes = [...byTs.entries()].sort((a, b) => a[0] - b[0]);
+  const errors: number[] = [];
+
+  const nearestClose = (t: number): number | null => {
+    if (byTs.has(t)) return byTs.get(t)!;
+    let best: number | null = null;
+    let bestDt = Infinity;
+    for (const [ct, close] of closes) {
+      const dt = Math.abs(ct - t);
+      if (dt < bestDt) {
+        bestDt = dt;
+        best = close;
+      }
+    }
+    return bestDt <= 3 * 60_000 ? best : null;
+  };
+
+  for (const entry of history) {
+    for (const p of entry.points) {
+      const actual = nearestClose(tsMs(p.timestamp));
+      if (actual == null || actual === 0) continue;
+      // only score once the bar time is in the past relative to "now"
+      if (tsMs(p.timestamp) > Date.now()) continue;
+      errors.push((Math.abs(p.close - actual) / actual) * 100);
+    }
+  }
+  if (!errors.length) return null;
+  const maePct = errors.reduce((a, b) => a + b, 0) / errors.length;
+  return {
+    samples: errors.length,
+    maePct,
+    mapeHint: `MAE ${maePct.toFixed(2)}% · n=${errors.length}`,
+  };
+}
 
 export function CandlestickChart({
   candles,
   forecast = [],
+  forecastHistory = [],
+  showHistory = true,
   height = 420,
   showVolume = true,
   visibleBars,
@@ -24,9 +112,10 @@ export function CandlestickChart({
 }: {
   candles: Candle[];
   forecast?: ForecastPoint[];
+  forecastHistory?: ForecastHistoryEntry[];
+  showHistory?: boolean;
   height?: number;
   showVolume?: boolean;
-  /** Number of candles in the visible window (controlled). */
   visibleBars?: number;
   onVisibleBarsChange?: (n: number) => void;
 }) {
@@ -75,6 +164,7 @@ export function CandlestickChart({
   const mint = "var(--mint, #3DDC97)";
   const coral = "var(--coral, #FF5C5C)";
   const gold = "var(--gold, #D4A54A)";
+  const historyStroke = "var(--muted, #8B949E)";
   const grid = "var(--border, #1F2530)";
   const muted = "var(--muted, #8B949E)";
   const fg = "var(--foreground, #E8ECF1)";
@@ -86,6 +176,11 @@ export function CandlestickChart({
   const volH = showVolume ? 48 : 0;
   const chartH = height - pad.top - pad.bottom;
   const chartW = Math.max(40, width - pad.left - pad.right);
+
+  const accuracy = useMemo(
+    () => forecastAccuracy(forecastHistory, candles),
+    [forecastHistory, candles],
+  );
 
   if (!candles.length) {
     return (
@@ -105,6 +200,31 @@ export function CandlestickChart({
     );
   }
 
+  const liveGeneratedAt = forecast.length
+    ? forecastHistory.find((h) => h.points === forecast)?.generatedAt
+    : undefined;
+  // Prefer matching by last history entry equaling current live points length/time
+  const currentGenerated =
+    forecastHistory.length > 0
+      ? forecastHistory[forecastHistory.length - 1]?.generatedAt
+      : undefined;
+
+  const historyToDraw = showHistory
+    ? forecastHistory
+        .filter((h) => h.generatedAt !== currentGenerated || end < candles.length)
+        .slice(-HISTORY_DRAW_LIMIT)
+    : [];
+
+  // When at live edge, still draw older history (exclude newest = live)
+  const histEntries =
+    end === candles.length
+      ? historyToDraw.filter((h) => h.generatedAt !== currentGenerated)
+      : historyToDraw;
+
+  void liveGeneratedAt;
+
+  const histPrices = histEntries.flatMap((h) => h.points.map((p) => p.close));
+
   const allCloses = [
     ...view.flatMap((c) => [c.high, c.low]),
     ...(end === candles.length
@@ -115,6 +235,7 @@ export function CandlestickChart({
           f.closeLow ?? f.close,
         ])
       : []),
+    ...histPrices,
   ];
   const minP = Math.min(...allCloses);
   const maxP = Math.max(...allCloses);
@@ -130,9 +251,26 @@ export function CandlestickChart({
   const y = (price: number) =>
     pad.top + ((yMax - price) / (yMax - yMin || 1)) * chartH;
   const xCandle = (i: number) => pad.left + i * slot + slot / 2;
+  const candleTimes = view.map((c) => tsMs(c.timestamp));
 
   const maxVol = Math.max(...view.map((c) => c.volume), 1);
   const lastIdx = view.length - 1;
+
+  const historyPaths = histEntries.map((entry, hi) => {
+    const coords: { x: number; y: number }[] = [];
+    for (const p of entry.points) {
+      const x = xForTime(tsMs(p.timestamp), candleTimes, xCandle);
+      if (x == null) continue;
+      coords.push({ x, y: y(p.close) });
+    }
+    if (coords.length < 2) return null;
+    const d = coords
+      .map((c, i) => `${i === 0 ? "M" : "L"} ${c.x} ${c.y}`)
+      .join(" ");
+    const age = histEntries.length <= 1 ? 1 : hi / (histEntries.length - 1);
+    const opacity = 0.25 + age * 0.35;
+    return { id: entry.id, d, opacity, generatedAt: entry.generatedAt };
+  });
 
   const forecastPath = showForecast
     ? forecast
@@ -145,7 +283,10 @@ export function CandlestickChart({
     : "";
 
   const bandPath = (() => {
-    if (!showForecast || !forecast.some((f) => f.closeHigh != null && f.closeLow != null)) {
+    if (
+      !showForecast ||
+      !forecast.some((f) => f.closeHigh != null && f.closeLow != null)
+    ) {
       return null;
     }
     const top = forecast
@@ -182,7 +323,6 @@ export function CandlestickChart({
     const next = Math.round(windowSize * factor);
     setVisible(next);
     if (e.deltaY > 0) {
-      // zooming out — keep right edge pinned when at live edge
       setOffsetFromEnd((o) => Math.min(o, Math.max(0, candles.length - next)));
     }
   };
@@ -193,7 +333,6 @@ export function CandlestickChart({
   };
   const onPointerMove = (e: ReactPointerEvent) => {
     if (!dragRef.current) {
-      // hover crosshair
       const rect = containerRef.current?.getBoundingClientRect();
       if (!rect) return;
       const x = e.clientX - rect.left;
@@ -266,7 +405,8 @@ export function CandlestickChart({
             fontSize: 11,
             fontFamily: "var(--kronos-font-mono, monospace)",
             color: fg,
-            background: "color-mix(in srgb, var(--panel, #12161f) 88%, transparent)",
+            background:
+              "color-mix(in srgb, var(--panel, #12161f) 88%, transparent)",
             border: `1px solid ${grid}`,
             borderRadius: 6,
             padding: "6px 8px",
@@ -291,7 +431,7 @@ export function CandlestickChart({
           )}
           {hoverForecast && (
             <>
-              <span style={{ color: gold }}>Forecast</span>
+              <span style={{ color: gold }}>Live forecast</span>
               <span style={{ color: muted }}>
                 {new Date(hoverForecast.timestamp).toLocaleString()}
               </span>
@@ -312,7 +452,7 @@ export function CandlestickChart({
         width={width}
         height={height}
         role="img"
-        aria-label="Candlestick chart with Kronos forecast"
+        aria-label="Candlestick chart with Kronos forecast history"
         style={{ display: "block" }}
       >
         {priceTicks.map((t) => (
@@ -338,7 +478,22 @@ export function CandlestickChart({
           </g>
         ))}
 
-        {bandPath && <path d={bandPath} fill={`${gold}`} opacity={0.12} />}
+        {historyPaths.map(
+          (hp) =>
+            hp && (
+              <path
+                key={hp.id}
+                d={hp.d}
+                fill="none"
+                stroke={historyStroke}
+                strokeWidth={1.25}
+                strokeDasharray="3 4"
+                opacity={hp.opacity}
+              />
+            ),
+        )}
+
+        {bandPath && <path d={bandPath} fill={gold} opacity={0.12} />}
 
         {view.map((c, i) => {
           const cx = xCandle(i);
@@ -438,11 +593,18 @@ export function CandlestickChart({
           fontFamily: "var(--kronos-font-mono, monospace)",
           color: muted,
           pointerEvents: "none",
+          display: "flex",
+          gap: 10,
         }}
       >
-        {start + 1}–{end} / {candles.length}
-        {showForecast ? ` · +${forecast.length} fc` : ""}
-        {" · scroll zoom · drag pan"}
+        <span>
+          {start + 1}–{end} / {candles.length}
+          {showForecast ? ` · +${forecast.length} live fc` : ""}
+          {showHistory && histEntries.length
+            ? ` · ${histEntries.length} past fc`
+            : ""}
+        </span>
+        {accuracy && <span style={{ color: gold }}>{accuracy.mapeHint}</span>}
       </div>
     </div>
   );

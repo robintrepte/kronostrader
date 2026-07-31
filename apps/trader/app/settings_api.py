@@ -77,7 +77,7 @@ def settings_public(settings) -> dict[str, Any]:
         "barTimeframe": settings.bar_timeframe,
         "lookbackBars": settings.lookback_bars,
         "predLen": settings.pred_len,
-        "mockMarketData": settings.mock_market_data,
+        "mockMarketData": False,
         "risk": {
             "maxPositionSize": settings.max_position_size,
             "maxPortfolioExposure": settings.max_portfolio_exposure,
@@ -125,8 +125,12 @@ def apply_settings_patch(state, patch: SettingsPatch) -> dict[str, Any]:
         s.pred_len = patch.predLen
         changed.append("predLen")
 
-    if patch.mockMarketData is not None and patch.mockMarketData != s.mock_market_data:
-        s.mock_market_data = patch.mockMarketData
+    if patch.mockMarketData is True:
+        raise ValueError(
+            "mockMarketData cannot be enabled — synthetic candles are disabled. Use real Alpaca data only."
+        )
+    if patch.mockMarketData is False and s.mock_market_data:
+        s.mock_market_data = False
         changed.append("mockMarketData")
 
     if patch.risk is not None:

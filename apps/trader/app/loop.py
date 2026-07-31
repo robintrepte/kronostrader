@@ -31,12 +31,25 @@ def _candle_dict(c) -> dict:
     }
 
 
-def _forecast_dict(symbol: str, points, model: str, sample_count: int) -> dict:
+def _forecast_dict(
+    symbol: str,
+    points,
+    model: str,
+    sample_count: int,
+    *,
+    anchor_timestamp: str | None = None,
+    anchor_close: float | None = None,
+) -> dict:
+    from uuid import uuid4
+
     return {
+        "id": str(uuid4()),
         "symbol": symbol,
         "generatedAt": datetime.now(timezone.utc).isoformat(),
         "model": model,
         "sampleCount": sample_count,
+        "anchorTimestamp": anchor_timestamp,
+        "anchorClose": anchor_close,
         "points": [
             {
                 "timestamp": p.timestamp.isoformat(),
@@ -62,12 +75,24 @@ async def process_symbol(settings: Settings, broker: Broker, symbol: str) -> Non
         stop_loss_pct=settings.stop_loss_pct,
     )
 
-    candles = await asyncio.to_thread(fetch_candles, settings, symbol)
-    if len(candles) < 2:
-        entry = state.add_activity("error", f"Not enough candles for {symbol}", symbol)
+    try:
+        candles = await asyncio.to_thread(fetch_candles, settings, symbol)
+    except Exception as exc:
+        logger.exception("Market data failed for %s", symbol)
+        msg = str(exc)
+        state.note_market_error(symbol, msg)
+        entry = state.add_activity("error", msg, symbol, meta={"source": "market_data"})
         await bus.publish({"type": "activity", "timestamp": entry["timestamp"], "payload": entry})
         return
 
+    if len(candles) < 2:
+        msg = f"Not enough candles for {symbol} (got {len(candles)})"
+        state.note_market_error(symbol, msg)
+        entry = state.add_activity("error", msg, symbol)
+        await bus.publish({"type": "activity", "timestamp": entry["timestamp"], "payload": entry})
+        return
+
+    state.note_market_ok(symbol)
     async with state.lock:
         state.candles[symbol] = [_candle_dict(c) for c in candles]
     last = candles[-1]
@@ -79,13 +104,23 @@ async def process_symbol(settings: Settings, broker: Broker, symbol: str) -> Non
         points, raw = await request_forecast(settings, symbol, candles, sample_count=2)
     except Exception as exc:
         logger.exception("Inference failed for %s", symbol)
-        entry = state.add_activity("error", f"Inference failed: {exc}", symbol)
+        msg = f"Inference failed: {exc}"
+        state.note_inference_error(symbol, msg)
+        entry = state.add_activity("error", msg, symbol)
         await bus.publish({"type": "activity", "timestamp": entry["timestamp"], "payload": entry})
         return
 
-    forecast_payload = _forecast_dict(symbol, points, raw.get("model", "kronos"), raw.get("sample_count", 1))
+    state.note_inference_ok(symbol)
+    forecast_payload = _forecast_dict(
+        symbol,
+        points,
+        raw.get("model", "kronos"),
+        raw.get("sample_count", 1),
+        anchor_timestamp=last.timestamp.isoformat(),
+        anchor_close=float(last.close),
+    )
     async with state.lock:
-        state.forecasts[symbol] = forecast_payload
+        state.record_forecast(forecast_payload)
     await bus.publish(
         {
             "type": "forecast",
@@ -161,7 +196,12 @@ async def process_symbol(settings: Settings, broker: Broker, symbol: str) -> Non
                 generated_at=datetime.now(timezone.utc),
                 model=raw.get("model", "kronos"),
                 sample_count=int(raw.get("sample_count", 1)),
-                points={"points": forecast_payload["points"]},
+                points={
+                    "points": forecast_payload["points"],
+                    "anchorTimestamp": forecast_payload.get("anchorTimestamp"),
+                    "anchorClose": forecast_payload.get("anchorClose"),
+                    "id": forecast_payload.get("id"),
+                },
             )
         )
         session.add(
@@ -383,7 +423,9 @@ async def trading_loop(settings: Settings) -> None:
                 await process_symbol(settings, broker, symbol)
             except Exception:
                 logger.exception("Loop error for %s", symbol)
-                entry = state.add_activity("error", f"Loop error for {symbol}", symbol)
+                msg = f"Loop error for {symbol}"
+                state.note_market_error(symbol, msg)
+                entry = state.add_activity("error", msg, symbol)
                 await bus.publish({"type": "activity", "timestamp": entry["timestamp"], "payload": entry})
         try:
             await refresh_equity(settings, broker)

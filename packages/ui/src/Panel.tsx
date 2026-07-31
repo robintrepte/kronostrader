@@ -1,16 +1,21 @@
-import type { ReactNode } from "react";
+import type { CSSProperties, ReactNode } from "react";
 
 export function Panel({
   title,
   children,
   action,
+  className,
+  style,
 }: {
   title: string;
   children: ReactNode;
   action?: ReactNode;
+  className?: string;
+  style?: CSSProperties;
 }) {
   return (
     <section
+      className={className}
       style={{
         background: "var(--kronos-panel)",
         border: "1px solid var(--kronos-border)",
@@ -20,6 +25,7 @@ export function Panel({
         display: "flex",
         flexDirection: "column",
         gap: 12,
+        ...style,
       }}
     >
       <header
@@ -28,6 +34,7 @@ export function Panel({
           alignItems: "center",
           justifyContent: "space-between",
           gap: 12,
+          flexShrink: 0,
         }}
       >
         <h2
@@ -43,7 +50,16 @@ export function Panel({
         </h2>
         {action}
       </header>
-      <div style={{ minHeight: 0, flex: 1 }}>{children}</div>
+      <div
+        style={{
+          minHeight: 0,
+          flex: 1,
+          display: "flex",
+          flexDirection: "column",
+        }}
+      >
+        {children}
+      </div>
     </section>
   );
 }

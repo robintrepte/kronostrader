@@ -11,6 +11,7 @@ from fastapi.responses import JSONResponse
 
 from app.config import get_settings
 from app.engine import ModelNotReadyError, engine
+from app.hardware import collect_hardware
 from app.logging_setup import setup_logging
 from app.schemas import HealthResponse, PredictRequest, PredictResponse
 
@@ -50,14 +51,16 @@ async def request_id_middleware(request: Request, call_next):
 @app.get("/health", response_model=HealthResponse)
 async def health() -> HealthResponse:
     settings = get_settings()
+    device = engine.device or settings.device
     return HealthResponse(
         status="ok" if engine.loaded else "degraded",
         model=engine.model_id or settings.model_id,
         tokenizer=engine.tokenizer_id or settings.tokenizer_id,
-        device=engine.device or settings.device,
+        device=device,
         loaded=engine.loaded,
         uptime_seconds=round(time.time() - STARTED_AT, 2),
         max_context=engine.max_context or settings.max_context,
+        hardware=collect_hardware(device),
     )
 
 

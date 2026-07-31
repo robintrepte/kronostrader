@@ -40,6 +40,15 @@ export interface Forecast {
   points: ForecastPoint[];
   model: string;
   sampleCount: number;
+  /** Last real candle timestamp when this forecast was made */
+  anchorTimestamp?: string;
+  /** Last real candle close when this forecast was made */
+  anchorClose?: number;
+}
+
+/** A stored forecast kept for accuracy review once time catches up. */
+export interface ForecastHistoryEntry extends Forecast {
+  id: string;
 }
 
 export interface Signal {
@@ -145,6 +154,8 @@ export interface Snapshot {
   selectedSymbol: string;
   candles: Record<string, Candle[]>;
   forecasts: Record<string, Forecast | null>;
+  /** Recent past forecasts per symbol (oldest → newest), for accuracy overlays */
+  forecastHistory?: Record<string, ForecastHistoryEntry[]>;
   positions: Position[];
   orders: Order[];
   equity: EquityPoint[];
@@ -160,6 +171,63 @@ export interface Snapshot {
   lookbackBars?: number;
   predLen?: number;
   mockMarketData?: boolean;
+  marketDataFeed?: string;
+  marketErrors?: Record<string, string>;
+  inferenceErrors?: Record<string, string>;
+}
+
+export interface HardwareStats {
+  device?: string;
+  cpuPercent?: number | null;
+  cpuCount?: number | null;
+  ramUsedGb?: number | null;
+  ramTotalGb?: number | null;
+  processRssGb?: number | null;
+  cudaAvailable?: boolean;
+  cudaDeviceName?: string | null;
+  cudaMemoryAllocatedGb?: number | null;
+  cudaMemoryReservedGb?: number | null;
+}
+
+export interface SystemStatus {
+  level: "ok" | "degraded" | "error";
+  summary: string;
+  checkedAt: string;
+  issues: string[];
+  trader: {
+    ok: boolean;
+    dryRun: boolean;
+    paper: boolean;
+    live: boolean;
+    symbols: string[];
+    mockMarketData: boolean;
+    intervalSeconds: number;
+    strategy: string;
+  };
+  marketData: {
+    ok: boolean;
+    provider: string;
+    feed: string;
+    mock: boolean;
+    keysConfigured: boolean;
+    lastSuccessBySymbol: Record<string, string>;
+    errorsBySymbol: Record<string, string>;
+    delayMinutes: number;
+  };
+  inference: {
+    ok: boolean;
+    reachable: boolean;
+    loaded: boolean;
+    status: string;
+    url: string;
+    model?: string | null;
+    tokenizer?: string | null;
+    device?: string | null;
+    uptimeSeconds?: number | null;
+    maxContext?: number | null;
+    hardware?: HardwareStats | null;
+    error?: string | null;
+  };
 }
 
 export type WsEventType =

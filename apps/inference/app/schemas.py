@@ -56,3 +56,4 @@ class HealthResponse(BaseModel):
     loaded: bool
     uptime_seconds: float
     max_context: int
+    hardware: Optional[dict] = None

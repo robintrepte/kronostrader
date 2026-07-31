@@ -1,4 +1,4 @@
 export { Badge } from "./Badge";
 export { Panel } from "./Panel";
 export { LiveDot } from "./LiveDot";
-export { CandlestickChart } from "./CandlestickChart";
+export { CandlestickChart, forecastAccuracy } from "./CandlestickChart";

@@ -13,15 +13,19 @@ import type {
   Candle,
   EquityPoint,
   Forecast,
+  ForecastHistoryEntry,
   Order,
   Position,
   SettingsPatch,
   Snapshot,
   WsEvent,
 } from "@kronos/shared-types";
-import { Badge, CandlestickChart, LiveDot, Panel } from "@kronos/ui";
+import { Badge, CandlestickChart, Panel } from "@kronos/ui";
 import { useTraderSocket } from "@/hooks/useTraderSocket";
+import { useSystemStatus } from "@/hooks/useSystemStatus";
 import { useTheme } from "@/components/ThemeProvider";
+import { SystemStatusLight } from "@/components/SystemStatusLight";
+import { SymbolStrip } from "@/components/SymbolStrip";
 import {
   Tooltip,
   TooltipContent,
@@ -39,6 +43,7 @@ const emptySnapshot: Snapshot = {
   selectedSymbol: "AAPL",
   candles: {},
   forecasts: {},
+  forecastHistory: {},
   positions: [],
   orders: [],
   equity: [],
@@ -84,14 +89,12 @@ export function TradingDesk() {
   const [chartHeight, setChartHeight] = useState(440);
   const [visibleBars, setVisibleBars] = useState(120);
   const [showVolume, setShowVolume] = useState(true);
-  const [settingsOpen, setSettingsOpen] = useState(true);
+  const [showHistory, setShowHistory] = useState(true);
   const [saving, setSaving] = useState(false);
   const [saveMsg, setSaveMsg] = useState<string | null>(null);
 
   const [form, setForm] = useState({
-    symbolsText: emptySnapshot.symbols.join(", "),
     dryRun: true,
-    mockMarketData: false,
     strategy: "forecast_momentum",
     signalThresholdPct: 0.5,
     tradeIntervalSeconds: 60,
@@ -105,11 +108,7 @@ export function TradingDesk() {
 
   const syncForm = useCallback((data: Snapshot) => {
     setForm({
-      symbolsText: (data.symbols.length ? data.symbols : emptySnapshot.symbols).join(
-        ", ",
-      ),
       dryRun: data.dryRun,
-      mockMarketData: data.mockMarketData ?? false,
       strategy: data.strategy ?? "forecast_momentum",
       signalThresholdPct: data.signalThresholdPct ?? 0.5,
       tradeIntervalSeconds: data.tradeIntervalSeconds ?? 60,
@@ -158,6 +157,7 @@ export function TradingDesk() {
 
   const candles: Candle[] = snap.candles[symbol] ?? [];
   const forecast: Forecast | null = snap.forecasts[symbol] ?? null;
+  const forecastHistory = snap.forecastHistory?.[symbol] ?? [];
   const last = candles[candles.length - 1];
   const prev = candles[candles.length - 2];
   const changePct =
@@ -169,14 +169,8 @@ export function TradingDesk() {
     e?.preventDefault();
     setSaving(true);
     setSaveMsg(null);
-    const symbols = form.symbolsText
-      .split(/[,\s]+/)
-      .map((s) => s.trim().toUpperCase())
-      .filter(Boolean);
     const patch: SettingsPatch = {
-      symbols,
       dryRun: form.dryRun,
-      mockMarketData: form.mockMarketData,
       strategy: form.strategy,
       signalThresholdPct: form.signalThresholdPct,
       tradeIntervalSeconds: form.tradeIntervalSeconds,
@@ -197,14 +191,17 @@ export function TradingDesk() {
       });
       const body = await res.json().catch(() => ({}));
       if (!res.ok) {
-        throw new Error(body.detail || body.message || `HTTP ${res.status}`);
+        throw new Error(
+          typeof body.detail === "string"
+            ? body.detail
+            : body.message || `HTTP ${res.status}`,
+        );
       }
       if (body.settings) {
         setSnap((prev) => ({
           ...prev,
           symbols: body.settings.symbols,
           dryRun: body.settings.dryRun,
-          mockMarketData: body.settings.mockMarketData,
           strategy: body.settings.strategy,
           signalThresholdPct: body.settings.signalThresholdPct,
           tradeIntervalSeconds: body.settings.tradeIntervalSeconds,
@@ -231,6 +228,53 @@ export function TradingDesk() {
     }
   };
 
+  const applySymbolList = useCallback(
+    async (next: string[]) => {
+      const cleaned = [
+        ...new Set(
+          next
+            .map((s) => s.trim().toUpperCase())
+            .filter((s) => /^[A-Z][A-Z0-9.\-]{0,9}$/.test(s)),
+        ),
+      ];
+      if (!cleaned.length) {
+        throw new Error("Keep at least one valid ticker");
+      }
+      const res = await fetch(`${API_URL}/api/settings`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ symbols: cleaned } satisfies SettingsPatch),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(
+          typeof body.detail === "string"
+            ? body.detail
+            : body.message || `HTTP ${res.status}`,
+        );
+      }
+      const symbols: string[] = body.settings?.symbols ?? cleaned;
+      setSnap((prev) => ({
+        ...prev,
+        symbols,
+        candles: Object.fromEntries(
+          symbols.map((s) => [s, prev.candles[s] ?? []]),
+        ),
+        forecasts: Object.fromEntries(
+          symbols.map((s) => [s, prev.forecasts[s] ?? null]),
+        ),
+        forecastHistory: Object.fromEntries(
+          symbols.map((s) => [s, prev.forecastHistory?.[s] ?? []]),
+        ),
+      }));
+      if (!symbols.includes(symbol)) {
+        setSymbol(symbols[0]);
+      }
+      return symbols;
+    },
+    [symbol],
+  );
+
   return (
     <TooltipProvider>
       <div className="flex min-h-full w-full flex-col gap-3 p-3 sm:gap-4 sm:p-4 md:p-5">
@@ -244,15 +288,7 @@ export function TradingDesk() {
             </h1>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            <Hint
-              label={
-                connected
-                  ? "WebSocket connected — live updates flowing."
-                  : "WebSocket disconnected. Start the trader to resume updates."
-              }
-            >
-              <LiveDot live={connected} />
-            </Hint>
+            <SystemStatusLight wsConnected={connected} />
             <Hint
               label={
                 snap.live
@@ -269,6 +305,11 @@ export function TradingDesk() {
                 <Badge tone="gold">DRY RUN</Badge>
               </Hint>
             )}
+            <Hint label="Market data is always real Alpaca bars — mock/synthetic is disabled.">
+              <Badge tone="mint">
+                REAL {(snap.marketDataFeed || "iex").toUpperCase()}
+              </Badge>
+            </Hint>
             <Hint label="Largest dollar notional allowed for one symbol.">
               <Badge tone="neutral">
                 max pos {formatUsd(snap.risk.maxPositionSize)}
@@ -283,55 +324,24 @@ export function TradingDesk() {
             >
               <button
                 type="button"
-                className="desk-btn"
+                className="desk-btn !min-h-9 !min-w-9 !px-0"
                 onClick={toggleTheme}
                 aria-label="Toggle color theme"
               >
-                {theme === "dark" ? "Light" : "Dark"}
+                {theme === "dark" ? <SunIcon /> : <MoonIcon />}
               </button>
             </Hint>
-            <button
-              type="button"
-              className="desk-btn sm:hidden"
-              onClick={() => setSettingsOpen((v) => !v)}
-            >
-              {settingsOpen ? "Hide settings" : "Settings"}
-            </button>
           </div>
         </header>
 
-        <div className="-mx-1 flex gap-2 overflow-x-auto px-1 pb-1">
-          {(snap.symbols.length ? snap.symbols : emptySnapshot.symbols).map(
-            (s) => {
-              const active = s === symbol;
-              const c = snap.candles[s];
-              const px = c?.[c.length - 1]?.close;
-              return (
-                <button
-                  key={s}
-                  type="button"
-                  onClick={() => setSymbol(s)}
-                  className="mono shrink-0 rounded-md border px-3 py-2.5 text-left transition sm:py-2"
-                  style={{
-                    borderColor: active ? "var(--gold)" : "var(--border)",
-                    background: active
-                      ? "color-mix(in srgb, var(--gold) 12%, var(--panel))"
-                      : "var(--panel)",
-                    color: "var(--foreground)",
-                    minWidth: 88,
-                  }}
-                >
-                  <div className="text-[10px] text-[var(--muted)] sm:text-xs">
-                    {s}
-                  </div>
-                  <div className="text-sm">
-                    {px != null ? px.toFixed(2) : "—"}
-                  </div>
-                </button>
-              );
-            },
-          )}
-        </div>
+        <ErrorBanner connected={connected} />
+        <SymbolStrip
+          symbols={snap.symbols.length ? snap.symbols : emptySnapshot.symbols}
+          active={symbol}
+          candles={snap.candles}
+          onSelect={setSymbol}
+          onChangeSymbols={applySymbolList}
+        />
 
         <div className="grid grid-cols-1 gap-3 lg:gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(280px,340px)]">
           <Panel
@@ -409,14 +419,37 @@ export function TradingDesk() {
                   aria-label="Toggle volume bars"
                 />
               </label>
+              <label className="mono flex items-center gap-2 text-[10px] text-[var(--muted)] sm:text-[11px]">
+                Past FC
+                <Switch
+                  checked={showHistory}
+                  onCheckedChange={setShowHistory}
+                  aria-label="Toggle past forecast history"
+                />
+              </label>
+              <Hint label="Gold dashed = live Kronos forecast. Grey dashed = past forecasts overlaid on realized candles for accuracy.">
+                <span className="mono text-[10px] text-[var(--muted)]">
+                  {forecastHistory.length} saved
+                </span>
+              </Hint>
               <span className="mono text-[10px] text-[var(--muted)]">
                 {visibleBars} bars
               </span>
             </div>
             <div className="overflow-hidden rounded-md border border-[var(--border)]">
+              {(snap.marketErrors?.[symbol] || snap.inferenceErrors?.[symbol]) && (
+                <div className="border-b border-[var(--coral)]/40 bg-[color-mix(in_srgb,var(--coral)_12%,transparent)] px-3 py-2">
+                  <p className="mono text-[11px] text-[var(--coral)]">
+                    {snap.marketErrors?.[symbol] ||
+                      snap.inferenceErrors?.[symbol]}
+                  </p>
+                </div>
+              )}
               <CandlestickChart
                 candles={candles}
                 forecast={forecast?.points ?? []}
+                forecastHistory={forecastHistory}
+                showHistory={showHistory}
                 height={chartHeight}
                 showVolume={showVolume}
                 visibleBars={visibleBars}
@@ -468,60 +501,27 @@ export function TradingDesk() {
           </div>
         </div>
 
-        <div className="grid grid-cols-1 gap-3 lg:grid-cols-2 lg:gap-4">
-          <Panel title="Activity">
-            <ScrollArea className="h-64 sm:h-72 md:h-80">
-              <ul className="space-y-2 pr-3">
-                {snap.activity.length === 0 && (
-                  <li className="mono text-xs text-[var(--muted)]">
-                    No events yet
-                  </li>
-                )}
-                {snap.activity.map((a) => (
-                  <ActivityRow key={a.id} entry={a} />
-                ))}
-              </ul>
-            </ScrollArea>
-          </Panel>
+        <div className="grid grid-cols-1 items-stretch gap-3 lg:grid-cols-2 lg:gap-4">
+          <ActivityPanel activity={snap.activity} />
 
-          <div className={settingsOpen ? "block" : "hidden sm:block"}>
-            <Panel title="Settings">
+          <Panel title="Settings" className="h-full">
               <form
                 className="flex flex-col gap-3"
                 onSubmit={saveSettings}
               >
-                <Field
-                  label="Trade symbols"
-                  hint="Comma-separated tickers the loop will trade."
-                >
-                  <input
-                    className="desk-input"
-                    value={form.symbolsText}
-                    onChange={(e) =>
-                      setForm((f) => ({ ...f, symbolsText: e.target.value }))
-                    }
-                    placeholder="AAPL, MSFT, NVDA"
-                  />
-                </Field>
+                <p className="mono text-[10px] text-[var(--muted)]">
+                  Symbols are managed in the strip above — add or remove tickers
+                  there.
+                </p>
 
-                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                  <ToggleField
-                    label="Dry run"
-                    hint="When on, no orders are sent to Alpaca."
-                    checked={form.dryRun}
-                    onCheckedChange={(v) =>
-                      setForm((f) => ({ ...f, dryRun: v }))
-                    }
-                  />
-                  <ToggleField
-                    label="Mock market data"
-                    hint="Use synthetic candles instead of Alpaca bars."
-                    checked={form.mockMarketData}
-                    onCheckedChange={(v) =>
-                      setForm((f) => ({ ...f, mockMarketData: v }))
-                    }
-                  />
-                </div>
+                <ToggleField
+                  label="Dry run"
+                  hint="When on, no orders are sent to Alpaca."
+                  checked={form.dryRun}
+                  onCheckedChange={(v) =>
+                    setForm((f) => ({ ...f, dryRun: v }))
+                  }
+                />
 
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                   <Field
@@ -710,7 +710,6 @@ export function TradingDesk() {
                 {snap.orders[0] && <RecentOrder order={snap.orders[0]} />}
               </form>
             </Panel>
-          </div>
         </div>
       </div>
     </TooltipProvider>
@@ -732,6 +731,73 @@ function ToolbarBtn({
         {children}
       </button>
     </Hint>
+  );
+}
+
+function ErrorBanner({ connected }: { connected: boolean }) {
+  const { status, fetchError } = useSystemStatus(5000);
+  const issues: string[] = [];
+  if (!connected) issues.push("WebSocket disconnected — start/restart the trader.");
+  if (fetchError) {
+    issues.push(
+      fetchError.includes("404")
+        ? "Status API 404 — restart the trader (.\scripts\dev.ps1 trader) so /api/status loads."
+        : `Status API unreachable: ${fetchError}`,
+    );
+  }
+  if (status?.marketData.mock) {
+    issues.push("Mock market data flag is on — synthetic candles are blocked.");
+  }
+  if (status && !status.marketData.keysConfigured) {
+    issues.push("Alpaca API keys are missing.");
+  }
+  for (const issue of status?.issues ?? []) {
+    if (!issues.includes(issue)) issues.push(issue);
+  }
+  if (!issues.length) return null;
+  return (
+    <div
+      role="alert"
+      className="rounded-md border border-[var(--coral)]/50 bg-[color-mix(in_srgb,var(--coral)_10%,var(--panel))] px-3 py-2.5"
+    >
+      <p className="mono mb-1 text-[10px] uppercase tracking-wider text-[var(--coral)]">
+        Errors — no silent mock fallback
+      </p>
+      <ul className="space-y-1">
+        {issues.slice(0, 6).map((issue) => (
+          <li key={issue} className="text-sm leading-snug text-[var(--foreground)]">
+            {issue}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+function SunIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden>
+      <circle cx="12" cy="12" r="4" stroke="currentColor" strokeWidth="1.75" />
+      <path
+        d="M12 2v2.5M12 19.5V22M4.93 4.93l1.77 1.77M17.3 17.3l1.77 1.77M2 12h2.5M19.5 12H22M4.93 19.07l1.77-1.77M17.3 6.7l1.77-1.77"
+        stroke="currentColor"
+        strokeWidth="1.75"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}
+
+function MoonIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden>
+      <path
+        d="M20 14.5A8.5 8.5 0 1 1 9.5 4 7 7 0 0 0 20 14.5Z"
+        stroke="currentColor"
+        strokeWidth="1.75"
+        strokeLinejoin="round"
+      />
+    </svg>
   );
 }
 
@@ -817,6 +883,154 @@ function PositionRow({ p }: { p: Position }) {
   );
 }
 
+const ACTIVITY_PAGE = 20;
+
+function ActivityPanel({ activity }: { activity: ActivityLogEntry[] }) {
+  const [limit, setLimit] = useState(ACTIVITY_PAGE);
+  const visible = Math.min(limit, activity.length);
+  const shown = activity.slice(0, visible);
+  const hasMore = visible < activity.length;
+  const canCollapse = limit > ACTIVITY_PAGE && activity.length > ACTIVITY_PAGE;
+
+  return (
+    <Panel
+      title="Activity"
+      className="h-full min-h-[20rem]"
+      action={<CopyActivityButton activity={activity} />}
+    >
+      <div className="flex h-full min-h-0 flex-1 flex-col gap-2">
+        <ScrollArea className="h-full min-h-0 flex-1">
+          <ul className="space-y-2 pr-3">
+            {activity.length === 0 && (
+              <li className="mono text-xs text-[var(--muted)]">
+                No events yet
+              </li>
+            )}
+            {shown.map((a) => (
+              <ActivityRow key={a.id} entry={a} />
+            ))}
+          </ul>
+        </ScrollArea>
+        {activity.length > 0 && (
+          <div className="flex flex-wrap items-center justify-between gap-2 border-t border-[var(--border)] pt-2">
+            <span className="mono text-[10px] text-[var(--muted)]">
+              Showing {shown.length} of {activity.length}
+            </span>
+            <div className="flex gap-1.5">
+              {canCollapse && (
+                <button
+                  type="button"
+                  className="desk-btn !min-h-8 !px-2.5 text-[11px]"
+                  onClick={() => setLimit(ACTIVITY_PAGE)}
+                >
+                  Show less
+                </button>
+              )}
+              {hasMore && (
+                <button
+                  type="button"
+                  className="desk-btn !min-h-8 !px-2.5 text-[11px]"
+                  onClick={() =>
+                    setLimit((n) => Math.min(n + ACTIVITY_PAGE, activity.length))
+                  }
+                >
+                  Load more
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+    </Panel>
+  );
+}
+
+function formatActivityPlain(activity: ActivityLogEntry[]): string {
+  if (!activity.length) return "No activity events.";
+  return activity
+    .map((a) => {
+      const time = new Date(a.timestamp).toISOString();
+      const sym = a.symbol ? ` ${a.symbol}` : "";
+      return `[${time}] ${a.kind.toUpperCase()}${sym}  ${a.message}`;
+    })
+    .join("\n");
+}
+
+function CopyActivityButton({ activity }: { activity: ActivityLogEntry[] }) {
+  const [copied, setCopied] = useState(false);
+
+  const onCopy = async () => {
+    const text = formatActivityPlain(activity);
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1500);
+    } catch {
+      // Fallback for older browsers / denied permission
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      ta.style.position = "fixed";
+      ta.style.left = "-9999px";
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand("copy");
+      document.body.removeChild(ta);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1500);
+    }
+  };
+
+  return (
+    <Hint label={copied ? "Copied" : "Copy activity log as plain text"}>
+      <button
+        type="button"
+        className="desk-btn !min-h-8 !min-w-8 !px-0"
+        onClick={onCopy}
+        disabled={!activity.length}
+        aria-label="Copy activity log"
+      >
+        {copied ? <CheckIcon /> : <CopyIcon />}
+      </button>
+    </Hint>
+  );
+}
+
+function CopyIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden>
+      <rect
+        x="9"
+        y="9"
+        width="11"
+        height="11"
+        rx="2"
+        stroke="currentColor"
+        strokeWidth="1.75"
+      />
+      <path
+        d="M5 15V5a2 2 0 0 1 2-2h10"
+        stroke="currentColor"
+        strokeWidth="1.75"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}
+
+function CheckIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden>
+      <path
+        d="M5 13l4 4L19 7"
+        stroke="currentColor"
+        strokeWidth="1.75"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
 function ActivityRow({ entry }: { entry: ActivityLogEntry }) {
   const tone =
     entry.kind === "risk_reject" || entry.kind === "error"
@@ -884,11 +1098,28 @@ function applyEvent(prev: Snapshot, event: WsEvent): Snapshot {
         candles: { ...prev.candles, [symbol]: list.slice(-512) },
       };
     }
-    case "forecast":
+    case "forecast": {
+      const symbol = event.payload.symbol;
+      const entry: ForecastHistoryEntry = {
+        id: (event.payload as ForecastHistoryEntry).id || event.payload.generatedAt,
+        symbol: event.payload.symbol,
+        generatedAt: event.payload.generatedAt,
+        model: event.payload.model,
+        sampleCount: event.payload.sampleCount,
+        points: event.payload.points,
+        anchorTimestamp: event.payload.anchorTimestamp,
+        anchorClose: event.payload.anchorClose,
+      };
+      const prevHist = prev.forecastHistory?.[symbol] ?? [];
+      const nextHist = prevHist.some((h) => h.generatedAt === entry.generatedAt)
+        ? prevHist
+        : [...prevHist, entry].slice(-48);
       return {
         ...prev,
-        forecasts: { ...prev.forecasts, [event.payload.symbol]: event.payload },
+        forecasts: { ...prev.forecasts, [symbol]: event.payload },
+        forecastHistory: { ...prev.forecastHistory, [symbol]: nextHist },
       };
+    }
     case "order":
       return { ...prev, orders: [event.payload, ...prev.orders].slice(0, 50) };
     case "position":
