@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import type {
   ActivityLogEntry,
   Candle,
@@ -13,6 +13,12 @@ import type {
 } from "@kronos/shared-types";
 import { Badge, CandlestickChart, LiveDot, Panel } from "@kronos/ui";
 import { useTraderSocket } from "@/hooks/useTraderSocket";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8001";
 const WS_URL = process.env.NEXT_PUBLIC_WS_URL ?? "ws://localhost:8001/ws";
@@ -90,6 +96,7 @@ export function TradingDesk() {
   const equityPath = useMemo(() => buildEquityPath(snap.equity), [snap.equity]);
 
   return (
+    <TooltipProvider>
     <div className="mx-auto flex min-h-full max-w-[1600px] flex-col gap-4 p-4 md:p-6">
       <header className="flex flex-wrap items-center justify-between gap-4">
         <div>
@@ -101,14 +108,36 @@ export function TradingDesk() {
           </h1>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <LiveDot live={connected} />
-          <Badge tone={snap.paper ? "mint" : "coral"}>
-            {snap.live ? "LIVE" : "PAPER"}
-          </Badge>
-          {snap.dryRun && <Badge tone="gold">DRY RUN</Badge>}
-          <Badge tone="neutral">
-            max pos {formatUsd(snap.risk.maxPositionSize)}
-          </Badge>
+          <Hint
+            label={
+              connected
+                ? "WebSocket is connected to the trader API — live updates are flowing."
+                : "WebSocket is disconnected. Reconnect the trader service to resume live updates."
+            }
+          >
+            <LiveDot live={connected} />
+          </Hint>
+          <Hint
+            label={
+              snap.live
+                ? "LIVE: real money via Alpaca. Orders hit your funded brokerage account."
+                : "PAPER: simulated trading with fake money. Safe for testing strategies."
+            }
+          >
+            <Badge tone={snap.paper ? "mint" : "coral"}>
+              {snap.live ? "LIVE" : "PAPER"}
+            </Badge>
+          </Hint>
+          {snap.dryRun && (
+            <Hint label="DRY RUN: the loop computes signals but does not submit orders to Alpaca.">
+              <Badge tone="gold">DRY RUN</Badge>
+            </Hint>
+          )}
+          <Hint label="Max position size: largest dollar notional allowed for a single symbol.">
+            <Badge tone="neutral">
+              max pos {formatUsd(snap.risk.maxPositionSize)}
+            </Badge>
+          </Hint>
         </div>
       </header>
 
@@ -214,23 +243,72 @@ export function TradingDesk() {
 
         <Panel title="Settings (read-only)">
           <dl className="mono grid grid-cols-2 gap-x-4 gap-y-2 text-xs">
-            <dt className="text-[var(--muted)]">Strategy threshold</dt>
+            <HintLabel label="Minimum forecast move (%) before the strategy emits a buy/sell signal.">
+              Strategy threshold
+            </HintLabel>
             <dd>± signal via trader env</dd>
-            <dt className="text-[var(--muted)]">Max position</dt>
+            <HintLabel label="Largest dollar notional allowed for one symbol's open position.">
+              Max position
+            </HintLabel>
             <dd>{formatUsd(snap.risk.maxPositionSize)}</dd>
-            <dt className="text-[var(--muted)]">Max exposure</dt>
+            <HintLabel label="Cap on total portfolio notional across all open positions.">
+              Max exposure
+            </HintLabel>
             <dd>{formatUsd(snap.risk.maxPortfolioExposure)}</dd>
-            <dt className="text-[var(--muted)]">Stop-loss</dt>
+            <HintLabel label="Close a position if unrealized loss exceeds this percent from entry.">
+              Stop-loss
+            </HintLabel>
             <dd>{snap.risk.stopLossPct}%</dd>
-            <dt className="text-[var(--muted)]">API</dt>
+            <HintLabel label="HTTP base URL for the trader API (snapshot + REST).">
+              API
+            </HintLabel>
             <dd className="truncate">{API_URL}</dd>
-            <dt className="text-[var(--muted)]">Recent orders</dt>
+            <HintLabel label="Orders recorded in this session (newest first in activity).">
+              Recent orders
+            </HintLabel>
             <dd>{snap.orders.length}</dd>
           </dl>
           {snap.orders[0] && <RecentOrder order={snap.orders[0]} />}
         </Panel>
       </div>
     </div>
+    </TooltipProvider>
+  );
+}
+
+function Hint({
+  label,
+  children,
+}: {
+  label: string;
+  children: ReactNode;
+}) {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span className="inline-flex cursor-help">{children}</span>
+      </TooltipTrigger>
+      <TooltipContent side="bottom">{label}</TooltipContent>
+    </Tooltip>
+  );
+}
+
+function HintLabel({
+  label,
+  children,
+}: {
+  label: string;
+  children: ReactNode;
+}) {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <dt className="cursor-help text-[var(--muted)] underline decoration-dotted decoration-[var(--border)] underline-offset-2">
+          {children}
+        </dt>
+      </TooltipTrigger>
+      <TooltipContent side="left">{label}</TooltipContent>
+    </Tooltip>
   );
 }
 

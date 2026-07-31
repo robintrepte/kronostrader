@@ -11,3 +11,5 @@ alpaca-py
 pandas
 numpy
 websockets
+certifi
+pip-system-certs

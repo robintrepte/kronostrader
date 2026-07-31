@@ -37,8 +37,8 @@ class Settings(BaseSettings):
     max_portfolio_exposure: float = 5000.0
     stop_loss_pct: float = 2.0
 
-    database_url: str = "postgresql+asyncpg://kronos:kronos@localhost:5432/kronos"
-    redis_url: str = "redis://localhost:6379/0"
+    database_url: str = "postgresql+asyncpg://kronos:kronos@127.0.0.1:5433/kronos"
+    redis_url: str = "redis://127.0.0.1:6379/0"
     inference_url: str = "http://localhost:8000"
 
     trader_api_host: str = "0.0.0.0"
@@ -47,6 +47,12 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
 
     mock_market_data: bool = False
+    # iex = free/paper friendly; sip requires paid market data subscription
+    alpaca_data_feed: str = "iex"
+    # Free plans often cannot query the newest minutes; 15–20 is a safe buffer
+    alpaca_data_delay_minutes: int = 20
+    # Set false on Windows networks that intercept TLS without a trusted corporate CA
+    ssl_verify: bool = True
 
     @property
     def symbols(self) -> list[str]:

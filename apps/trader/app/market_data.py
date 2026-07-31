@@ -24,7 +24,6 @@ def _timeframe_to_delta(tf: str) -> timedelta:
 def mock_candles(symbol: str, lookback: int, timeframe: str) -> list[Candle]:
     delta = _timeframe_to_delta(timeframe)
     now = datetime.now(timezone.utc).replace(second=0, microsecond=0)
-    # Deterministic-ish walk from symbol hash
     seed = sum(ord(c) for c in symbol) % 50
     price = 100.0 + seed
     out: list[Candle] = []
@@ -55,9 +54,36 @@ def fetch_candles(settings: Settings, symbol: str) -> list[Candle]:
         logger.info("Using mock market data for %s", symbol)
         return mock_candles(symbol, settings.lookback_bars, settings.bar_timeframe)
 
+    try:
+        return _fetch_alpaca_candles(settings, symbol)
+    except Exception as exc:
+        msg = str(exc).lower()
+        name = type(exc).__name__
+        if (
+            "SSL" in name
+            or "certificate" in msg
+            or "subscription" in msg
+            or "403" in msg
+            or "forbidden" in msg
+            or "sip" in msg
+        ):
+            logger.warning(
+                "Alpaca market data unavailable for %s (%s). Falling back to mock candles.",
+                symbol,
+                exc,
+            )
+            return mock_candles(symbol, settings.lookback_bars, settings.bar_timeframe)
+        raise
+
+
+def _fetch_alpaca_candles(settings: Settings, symbol: str) -> list[Candle]:
+    from alpaca.data.enums import DataFeed
     from alpaca.data.historical import StockHistoricalDataClient
     from alpaca.data.requests import StockBarsRequest
     from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
+
+    feed_name = (settings.alpaca_data_feed or "iex").strip().lower()
+    feed = DataFeed.SIP if feed_name == "sip" else DataFeed.IEX
 
     tf_map = {
         "1Min": TimeFrame(1, TimeFrameUnit.Minute),
@@ -67,9 +93,13 @@ def fetch_candles(settings: Settings, symbol: str) -> list[Candle]:
         "1Day": TimeFrame(1, TimeFrameUnit.Day),
     }
     timeframe = tf_map.get(settings.bar_timeframe, TimeFrame(5, TimeFrameUnit.Minute))
-    client = StockHistoricalDataClient(settings.alpaca_api_key, settings.alpaca_secret_key)
-    end = datetime.now(timezone.utc)
-    # Over-fetch then trim
+    client = StockHistoricalDataClient(
+        settings.alpaca_api_key.strip().strip('"'),
+        settings.alpaca_secret_key.strip().strip('"'),
+    )
+
+    # Free/basic plans disallow "recent SIP"; keep a small buffer even for IEX.
+    end = datetime.now(timezone.utc) - timedelta(minutes=settings.alpaca_data_delay_minutes)
     start = end - _timeframe_to_delta(settings.bar_timeframe) * (settings.lookback_bars + 5)
     req = StockBarsRequest(
         symbol_or_symbols=symbol,
@@ -77,6 +107,7 @@ def fetch_candles(settings: Settings, symbol: str) -> list[Candle]:
         start=start,
         end=end,
         limit=settings.lookback_bars,
+        feed=feed,
     )
     bars = client.get_stock_bars(req)
     raw = bars.data.get(symbol, [])
@@ -85,7 +116,9 @@ def fetch_candles(settings: Settings, symbol: str) -> list[Candle]:
         candles.append(
             Candle(
                 symbol=symbol,
-                timestamp=b.timestamp if b.timestamp.tzinfo else b.timestamp.replace(tzinfo=timezone.utc),
+                timestamp=b.timestamp
+                if b.timestamp.tzinfo
+                else b.timestamp.replace(tzinfo=timezone.utc),
                 open=float(b.open),
                 high=float(b.high),
                 low=float(b.low),
@@ -93,4 +126,13 @@ def fetch_candles(settings: Settings, symbol: str) -> list[Candle]:
                 volume=float(b.volume or 0),
             )
         )
+    if not candles:
+        logger.warning("Alpaca returned no bars for %s — using mock", symbol)
+        return mock_candles(symbol, settings.lookback_bars, settings.bar_timeframe)
+    logger.info(
+        "Fetched %s Alpaca/%s bars for %s",
+        len(candles),
+        feed.value,
+        symbol,
+    )
     return candles[-settings.lookback_bars :]

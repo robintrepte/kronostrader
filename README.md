@@ -52,10 +52,13 @@ Postgres + Redis should already be running via Docker. Apps read the **root** `.
 cd C:\Users\Robin\Desktop\Code\kronostrader
 
 .\scripts\dev.ps1 infra       # postgres + redis (once)
-.\scripts\dev.ps1 inference   # Kronos API :8000  (first run installs deps + downloads model)
+.\scripts\download-kronos.ps1 -Model base   # once — downloads weights (~400MB) via PowerShell
+.\scripts\dev.ps1 inference   # Kronos API :8000
 .\scripts\dev.ps1 trader      # trading loop + WS :8001
 .\scripts\dev.ps1 dashboard   # UI http://localhost:3033
 ```
+
+If Hugging Face downloads fail inside Python (common TLS issue on some Windows networks), `download-kronos.ps1` is the reliable path. Inference loads from `apps/inference/models/` when present.
 
 Smoke prediction (after inference shows loaded):
 
@@ -90,7 +93,7 @@ See [`.env.example`](.env.example). Important flags:
 
 Install **latest stable** packages at setup time (`next@latest`, current `alpaca-py`, FastAPI, etc.).
 
-**Kronos exception:** inference pins deps from [shiyu-coder/Kronos `requirements.txt`](https://github.com/shiyu-coder/Kronos) (`pandas==2.2.2`, `huggingface_hub==0.33.1`, `einops==0.8.1`, `safetensors==0.6.2`, `torch>=2.0`) so the vendored model code stays compatible. Kronos is **not** a `transformers` pipeline — it uses `huggingface_hub.PyTorchModelHubMixin`.
+**Kronos exception:** inference follows [shiyu-coder/Kronos `requirements.txt`](https://github.com/shiyu-coder/Kronos) (`torch>=2.0`, `einops`/`huggingface_hub`/`safetensors` pins). On Python 3.13, `pandas` is `>=2.2.3,<2.3` instead of exact `2.2.2` because 2.2.2 has no Windows 3.13 wheel and fails to compile from source. Kronos is **not** a `transformers` pipeline — it uses `huggingface_hub.PyTorchModelHubMixin`.
 
 ## Hetzner production
 

@@ -4,10 +4,11 @@ pydantic
 pydantic-settings
 httpx
 numpy
-pandas==2.2.2
+# Kronos upstream pins pandas==2.2.2; 2.2.3+ ships Python 3.13 wheels (2.2.2 forces a broken source build on Windows).
+pandas>=2.2.3,<2.3
 torch>=2.0.0
 einops==0.8.1
 huggingface_hub==0.33.1
-matplotlib==3.9.3
+matplotlib>=3.9.3,<3.11
 tqdm==4.67.1
 safetensors==0.6.2
