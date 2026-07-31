@@ -1,0 +1,16 @@
+{
+  "name": "kronostrader",
+  "private": true,
+  "packageManager": "pnpm@11.18.0",
+  "scripts": {
+    "dev": "turbo run dev",
+    "build": "turbo run build",
+    "lint": "turbo run lint",
+    "dev:dashboard": "turbo run dev --filter=@kronos/dashboard",
+    "dev:infra": "docker compose -f infra/docker-compose.yml --env-file .env up postgres redis -d"
+  },
+  "devDependencies": {
+    "turbo": "^2.10.8",
+    "typescript": "^5.9.2"
+  }
+}

@@ -1,0 +1,56 @@
+@import "tailwindcss";
+@import "@kronos/ui/styles.css";
+
+:root {
+  --background: #0b0e14;
+  --foreground: #e8ecf1;
+  --panel: #12161f;
+  --border: #1f2530;
+  --mint: #3ddc97;
+  --coral: #ff5c5c;
+  --gold: #d4a54a;
+  --muted: #8b949e;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-panel: var(--panel);
+  --color-border: var(--border);
+  --color-mint: var(--mint);
+  --color-coral: var(--coral);
+  --color-gold: var(--gold);
+  --color-muted: var(--muted);
+  --font-sans: var(--font-body);
+  --font-mono: var(--font-mono-jb);
+  --font-display: var(--font-display);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background:
+    radial-gradient(1200px 600px at 10% -10%, #152033 0%, transparent 55%),
+    radial-gradient(900px 500px at 90% 0%, #1a1510 0%, transparent 50%),
+    var(--background);
+  color: var(--foreground);
+  font-family: var(--font-body), Inter, sans-serif;
+}
+
+h1,
+h2,
+h3 {
+  font-family: var(--font-display), "Space Grotesk", sans-serif;
+}
+
+.mono {
+  font-family: var(--font-mono-jb), "JetBrains Mono", ui-monospace, monospace;
+}

@@ -1,0 +1,15 @@
+[Unit]
+Description=Kronos Trader Docker Compose
+Requires=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=/opt/kronostrader
+ExecStart=/usr/bin/docker compose -f infra/docker-compose.prod.yml --env-file .env up -d
+ExecStop=/usr/bin/docker compose -f infra/docker-compose.prod.yml --env-file .env down
+TimeoutStartSec=0
+
+[Install]
+WantedBy=multi-user.target

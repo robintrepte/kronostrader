@@ -1,0 +1,6 @@
+[project]
+name = "kronos-trader"
+version = "0.1.0"
+description = "Kronos trading worker with Alpaca paper trading"
+requires-python = ">=3.10"
+dependencies = []

@@ -1,0 +1,13 @@
+:root {
+  --kronos-bg: #0b0e14;
+  --kronos-panel: #12161f;
+  --kronos-border: #1f2530;
+  --kronos-mint: #3ddc97;
+  --kronos-coral: #ff5c5c;
+  --kronos-gold: #d4a54a;
+  --kronos-text: #e8ecf1;
+  --kronos-muted: #8b949e;
+  --kronos-font-display: "Space Grotesk", sans-serif;
+  --kronos-font-body: Inter, sans-serif;
+  --kronos-font-mono: "JetBrains Mono", ui-monospace, monospace;
+}

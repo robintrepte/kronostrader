@@ -1,0 +1,95 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-kronos}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-kronos}
+      POSTGRES_DB: ${POSTGRES_DB:-kronos}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-kronos}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  inference:
+    build:
+      context: ..
+      dockerfile: infra/Dockerfile.inference
+    env_file:
+      - ../.env
+    environment:
+      KRONOS_MODEL_SIZE: ${KRONOS_MODEL_SIZE:-small}
+      MAX_CONTEXT: ${MAX_CONTEXT:-512}
+      USE_GPU: ${USE_GPU:-false}
+    ports:
+      - "8000:8000"
+    volumes:
+      - hf_cache:/cache/huggingface
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 180s
+
+  trader:
+    build:
+      context: ..
+      dockerfile: infra/Dockerfile.trader
+    env_file:
+      - ../.env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-kronos}:${POSTGRES_PASSWORD:-kronos}@postgres:5432/${POSTGRES_DB:-kronos}
+      REDIS_URL: redis://redis:6379/0
+      INFERENCE_URL: http://inference:8000
+      MOCK_MARKET_DATA: ${MOCK_MARKET_DATA:-true}
+      DRY_RUN: ${DRY_RUN:-true}
+    ports:
+      - "8001:8001"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      inference:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/health')"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  dashboard:
+    build:
+      context: ..
+      dockerfile: infra/Dockerfile.dashboard
+      args:
+        NEXT_PUBLIC_API_URL: http://localhost:8001
+        NEXT_PUBLIC_WS_URL: ws://localhost:8001/ws
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:8001
+      NEXT_PUBLIC_WS_URL: ws://localhost:8001/ws
+      PORT: "3033"
+    ports:
+      - "3033:3033"
+    depends_on:
+      - trader
+
+volumes:
+  postgres_data:
+  hf_cache:
