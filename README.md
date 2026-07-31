@@ -1,1 +1,3 @@
 # kronostrader
+
+new app
