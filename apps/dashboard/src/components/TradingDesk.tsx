@@ -97,13 +97,16 @@ const emptySnapshot: Snapshot = {
   paper: true,
   dryRun: true,
   live: false,
-  strategy: "forecast_momentum",
-  signalThresholdPct: 0.5,
+  strategy: "strict_forecast",
+  signalThresholdPct: 0.8,
   tradeIntervalSeconds: 60,
   barTimeframe: "5Min",
   lookbackBars: 512,
   predLen: 24,
   mockMarketData: false,
+  sampleCount: 4,
+  minConfidence: 0.55,
+  topKEntries: 3,
 };
 
 const CHART_HEIGHTS = [280, 360, 440, 560, 720] as const;
@@ -148,8 +151,8 @@ export function TradingDesk() {
 
   const [form, setForm] = useState({
     dryRun: true,
-    strategy: "forecast_momentum",
-    signalThresholdPct: 0.5,
+    strategy: "strict_forecast",
+    signalThresholdPct: 0.8,
     tradeIntervalSeconds: 60,
     barTimeframe: "5Min",
     lookbackBars: 512,
@@ -157,13 +160,18 @@ export function TradingDesk() {
     maxPositionSize: 1000,
     maxPortfolioExposure: 5000,
     stopLossPct: 2,
+    sampleCount: 4,
+    minConfidence: 0.55,
+    topKEntries: 3,
+    takeProfitFraction: 0.6,
+    minHitRate: 0.52,
   });
 
   const syncForm = useCallback((data: Snapshot) => {
     setForm({
       dryRun: data.dryRun,
-      strategy: data.strategy ?? "forecast_momentum",
-      signalThresholdPct: data.signalThresholdPct ?? 0.5,
+      strategy: data.strategy ?? "strict_forecast",
+      signalThresholdPct: data.signalThresholdPct ?? 0.8,
       tradeIntervalSeconds: data.tradeIntervalSeconds ?? 60,
       barTimeframe: data.barTimeframe ?? "5Min",
       lookbackBars: data.lookbackBars ?? 512,
@@ -171,6 +179,11 @@ export function TradingDesk() {
       maxPositionSize: data.risk.maxPositionSize,
       maxPortfolioExposure: data.risk.maxPortfolioExposure,
       stopLossPct: data.risk.stopLossPct,
+      sampleCount: data.sampleCount ?? data.edge?.sampleCount ?? 4,
+      minConfidence: data.minConfidence ?? data.edge?.minConfidence ?? 0.55,
+      topKEntries: data.topKEntries ?? data.edge?.topKEntries ?? 3,
+      takeProfitFraction: data.edge?.takeProfitFraction ?? 0.6,
+      minHitRate: data.edge?.minHitRate ?? 0.52,
     });
   }, []);
 
@@ -239,6 +252,11 @@ export function TradingDesk() {
       barTimeframe: form.barTimeframe,
       lookbackBars: form.lookbackBars,
       predLen: form.predLen,
+      sampleCount: form.sampleCount,
+      minConfidence: form.minConfidence,
+      topKEntries: form.topKEntries,
+      takeProfitFraction: form.takeProfitFraction,
+      minHitRate: form.minHitRate,
       risk: {
         maxPositionSize: form.maxPositionSize,
         maxPortfolioExposure: form.maxPortfolioExposure,
@@ -362,6 +380,12 @@ export function TradingDesk() {
           <div className="flex flex-wrap items-center gap-2">
             <SystemStatusLight wsConnected={connected} />
             <MarketSessionBadge />
+            {(snap.strategy === "strict_forecast" ||
+              snap.edge?.strict) && (
+              <Hint label="Strict mode: mostly HOLD — only high-confidence ranked entries.">
+                <Badge tone="sky">STRICT · MOSTLY HOLD</Badge>
+              </Hint>
+            )}
             <Hint
               label={
                 snap.live
@@ -602,6 +626,8 @@ export function TradingDesk() {
           </div>
         </div>
 
+        <EdgePanel snap={snap} />
+
         <div className="grid grid-cols-1 items-stretch gap-3 lg:grid-cols-2 lg:gap-4">
           <ActivityPanel activity={snap.activity} />
 
@@ -627,7 +653,7 @@ export function TradingDesk() {
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                   <Field
                     label="Strategy"
-                    hint="Signal strategy used each loop cycle."
+                    hint="strict_forecast = path + bands + metrics + top-K."
                   >
                     <Select
                       value={form.strategy}
@@ -639,6 +665,9 @@ export function TradingDesk() {
                         <SelectValue placeholder="Strategy" />
                       </SelectTrigger>
                       <SelectContent>
+                        <SelectItem value="strict_forecast">
+                          strict_forecast
+                        </SelectItem>
                         <SelectItem value="forecast_momentum">
                           forecast_momentum
                         </SelectItem>
@@ -763,7 +792,7 @@ export function TradingDesk() {
                   </Field>
                   <Field
                     label="Stop-loss %"
-                    hint="Exit if unrealized loss exceeds this."
+                    hint="Hard flatten if unrealized loss exceeds this."
                   >
                     <Input
                       type="number"
@@ -774,6 +803,82 @@ export function TradingDesk() {
                         setForm((f) => ({
                           ...f,
                           stopLossPct: Number(e.target.value),
+                        }))
+                      }
+                    />
+                  </Field>
+                  <Field label="Sample count" hint="Kronos samples per forecast (bands).">
+                    <Input
+                      type="number"
+                      min={1}
+                      max={8}
+                      value={form.sampleCount}
+                      onChange={(e) =>
+                        setForm((f) => ({
+                          ...f,
+                          sampleCount: Number(e.target.value),
+                        }))
+                      }
+                    />
+                  </Field>
+                  <Field label="Min confidence" hint="0–1 band tightness gate.">
+                    <Input
+                      type="number"
+                      step="0.05"
+                      min={0}
+                      max={1}
+                      value={form.minConfidence}
+                      onChange={(e) =>
+                        setForm((f) => ({
+                          ...f,
+                          minConfidence: Number(e.target.value),
+                        }))
+                      }
+                    />
+                  </Field>
+                  <Field label="Top-K entries" hint="Max new buys per cycle.">
+                    <Input
+                      type="number"
+                      min={1}
+                      max={10}
+                      value={form.topKEntries}
+                      onChange={(e) =>
+                        setForm((f) => ({
+                          ...f,
+                          topKEntries: Number(e.target.value),
+                        }))
+                      }
+                    />
+                  </Field>
+                  <Field
+                    label="Take-profit fraction"
+                    hint="Fraction of forecasted move for TP exit."
+                  >
+                    <Input
+                      type="number"
+                      step="0.1"
+                      min={0.1}
+                      max={2}
+                      value={form.takeProfitFraction}
+                      onChange={(e) =>
+                        setForm((f) => ({
+                          ...f,
+                          takeProfitFraction: Number(e.target.value),
+                        }))
+                      }
+                    />
+                  </Field>
+                  <Field label="Min hit-rate" hint="Metrics gate for tradeable symbols.">
+                    <Input
+                      type="number"
+                      step="0.01"
+                      min={0}
+                      max={1}
+                      value={form.minHitRate}
+                      onChange={(e) =>
+                        setForm((f) => ({
+                          ...f,
+                          minHitRate: Number(e.target.value),
                         }))
                       }
                     />
@@ -832,6 +937,148 @@ function ToolbarBtn({
         {children}
       </Button>
     </Hint>
+  );
+}
+
+function EdgePanel({ snap }: { snap: Snapshot }) {
+  const [localBacktest, setLocalBacktest] = useState<Snapshot["lastBacktest"]>(null);
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+  const backtest = localBacktest ?? snap.lastBacktest ?? null;
+  const metrics = snap.forecastMetrics ?? {};
+  const rows = (snap.symbols.length ? snap.symbols : Object.keys(metrics)).map(
+    (sym) => ({
+      symbol: sym,
+      m: metrics[sym],
+    }),
+  );
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`${API_URL}/api/backtest/last`);
+        if (!res.ok) return;
+        const data = await res.json();
+        if (!cancelled && data?.generatedAt) setLocalBacktest(data);
+      } catch {
+        /* ignore */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const runBacktest = async () => {
+    setBusy(true);
+    setMsg(null);
+    try {
+      const params = new URLSearchParams({
+        symbols: "BTC/USD,SPY",
+        max_steps: "12",
+        use_inference: "true",
+      });
+      const res = await fetch(`${API_URL}/api/backtest/run?${params}`, {
+        method: "POST",
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || data.message || `HTTP ${res.status}`);
+      setLocalBacktest(data);
+      setMsg(
+        data.ok
+          ? `Backtest done · PnL ${Number(data.netPnlPct ?? 0).toFixed(2)}%`
+          : data.message || "Backtest failed",
+      );
+    } catch (err) {
+      setMsg(err instanceof Error ? err.message : "Backtest failed");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Panel title="Edge · forecast quality & backtest">
+      <div className="flex flex-col gap-3">
+        <p className="mono text-[10px] text-[var(--muted)]">
+          Hit-rate / MAPE from realized vs past forecasts. Strict mode only
+          trades when metrics + confidence + regime agree (top-K).
+        </p>
+        <div className="overflow-x-auto">
+          <table className="mono w-full min-w-[480px] text-left text-[11px]">
+            <thead className="text-[10px] uppercase tracking-wider text-[var(--muted)]">
+              <tr>
+                <th className="pb-1 pr-3 font-normal">Symbol</th>
+                <th className="pb-1 pr-3 font-normal">N</th>
+                <th className="pb-1 pr-3 font-normal">Hit</th>
+                <th className="pb-1 pr-3 font-normal">MAPE</th>
+                <th className="pb-1 pr-3 font-normal">Band</th>
+                <th className="pb-1 font-normal">Tradeable</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.slice(0, 16).map(({ symbol: sym, m }) => (
+                <tr key={sym} className="border-t border-[var(--border)]">
+                  <td className="py-1.5 pr-3">{sym}</td>
+                  <td className="py-1.5 pr-3">{m?.n ?? 0}</td>
+                  <td className="py-1.5 pr-3">
+                    {m?.hitRate != null ? `${(m.hitRate * 100).toFixed(0)}%` : "—"}
+                  </td>
+                  <td className="py-1.5 pr-3">
+                    {m?.mape != null ? `${(m.mape * 100).toFixed(2)}%` : "—"}
+                  </td>
+                  <td className="py-1.5 pr-3">
+                    {m?.bandCoverage != null
+                      ? `${(m.bandCoverage * 100).toFixed(0)}%`
+                      : "—"}
+                  </td>
+                  <td
+                    className="py-1.5"
+                    style={{
+                      color: m?.tradeable ? "var(--mint)" : "var(--muted)",
+                    }}
+                  >
+                    {m?.n && m.n >= 3 ? (m.tradeable ? "yes" : "no") : "warmup"}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+
+        <div className="rounded-md border border-[var(--border)] bg-[var(--panel)] px-3 py-2">
+          <div className="mb-1 flex flex-wrap items-center justify-between gap-2">
+            <p className="mono text-[10px] uppercase tracking-wider text-[var(--sky)]">
+              Last backtest
+            </p>
+            <Button
+              type="button"
+              size="sm"
+              disabled={busy}
+              onClick={() => void runBacktest()}
+            >
+              {busy ? "Running…" : "Run BTC/USD+SPY"}
+            </Button>
+          </div>
+          {backtest && backtest.ok !== false && backtest.netPnlPct != null ? (
+            <p className="mono text-xs text-[var(--foreground)]">
+              PnL {Number(backtest.netPnlPct).toFixed(2)}% · DD{" "}
+              {Number(backtest.maxDrawdownPct ?? 0).toFixed(2)}% · trades{" "}
+              {backtest.tradeCount ?? 0} · win{" "}
+              {((backtest.winRate ?? 0) * 100).toFixed(0)}% · Sharpe~{" "}
+              {Number(backtest.sharpeLike ?? 0).toFixed(2)}
+            </p>
+          ) : (
+            <p className="mono text-[11px] text-[var(--muted)]">
+              No result yet — run a short cost-aware backtest (fees applied).
+            </p>
+          )}
+          {msg && (
+            <p className="mono mt-1 text-[10px] text-[var(--muted)]">{msg}</p>
+          )}
+        </div>
+      </div>
+    </Panel>
   );
 }
 

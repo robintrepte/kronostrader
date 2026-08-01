@@ -38,6 +38,11 @@ class RuntimeState:
         self.inference_last_ok: dict[str, str] = {}
         self.last_loop_error: str | None = None
 
+        # Edge stack
+        self.forecast_metrics: dict[str, dict[str, Any]] = {}
+        self.position_meta: dict[str, dict[str, Any]] = {}
+        self.last_backtest: dict[str, Any] | None = None
+
     def rebuild_local_positions(self) -> list[dict[str, Any]]:
         """Mark dry-run book to latest candle closes (entry ≠ mark once prices move)."""
         now = datetime.now(timezone.utc).isoformat()
@@ -81,6 +86,8 @@ class RuntimeState:
             self.market_last_ok.pop(k, None)
             self.inference_errors.pop(k, None)
             self.inference_last_ok.pop(k, None)
+            self.forecast_metrics.pop(k, None)
+            self.position_meta.pop(k, None)
         if self.selected_symbol not in symbols:
             self.selected_symbol = symbols[0] if symbols else "AAPL"
 
@@ -173,8 +180,22 @@ class RuntimeState:
             "assetClasses": {
                 sym: ("crypto" if "/" in sym else "us_equity") for sym in s.symbols
             },
+            "forecastMetrics": dict(self.forecast_metrics),
+            "edge": {
+                "strategy": s.strategy,
+                "strict": s.strategy == "strict_forecast",
+                "sampleCount": s.sample_count,
+                "topKEntries": s.top_k_entries,
+                "minConfidence": s.min_confidence,
+                "minHitRate": s.min_hit_rate,
+                "takeProfitFraction": s.take_profit_fraction,
+            },
+            "lastBacktest": self.last_backtest,
             "marketErrors": dict(self.market_errors),
             "inferenceErrors": dict(self.inference_errors),
+            "sampleCount": s.sample_count,
+            "minConfidence": s.min_confidence,
+            "topKEntries": s.top_k_entries,
         }
 
 

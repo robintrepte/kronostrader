@@ -32,12 +32,24 @@ class Settings(BaseSettings):
         "JPM,BAC,ORCL"
     )
     trade_interval_seconds: int = 60
-    bar_timeframe: str = "5Min"
-    lookback_bars: int = 512
-    pred_len: int = 24
+    bar_timeframe: str = "1Hour"
+    lookback_bars: int = 400
+    pred_len: int = 48
     dry_run: bool = True
-    strategy: str = "forecast_momentum"
-    signal_threshold_pct: float = 0.5
+    strategy: str = "strict_forecast"
+    # Calibrated for Kronos on 1Hour bars, ~48h horizon
+    signal_threshold_pct: float = 0.6
+    sample_count: int = 4
+    min_confidence: float = 0.35
+    max_band_width_pct: float = 3.0
+    max_forecast_drawdown_pct: float = 1.0
+    min_hit_rate: float = 0.48
+    max_mape: float = 0.03
+    require_metrics_tradeable: bool = True
+    take_profit_fraction: float = 0.6
+    top_k_entries: int = 3
+    regime_max_vol_pct: float = 5.0
+    regime_min_trend_pct: float = 0.05
 
     max_position_size: float = 2000.0
     max_portfolio_exposure: float = 25000.0

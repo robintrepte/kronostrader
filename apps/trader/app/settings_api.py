@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field, field_validator
 from app.assets import normalize_symbol
 
 ALLOWED_TIMEFRAMES = {"1Min", "5Min", "15Min", "1Hour", "1Day"}
-ALLOWED_STRATEGIES = {"forecast_momentum"}
+ALLOWED_STRATEGIES = {"forecast_momentum", "strict_forecast"}
 
 
 class RiskPatch(BaseModel):
@@ -27,6 +27,17 @@ class SettingsPatch(BaseModel):
     lookbackBars: int | None = Field(default=None, ge=32, le=2048)
     predLen: int | None = Field(default=None, ge=1, le=256)
     mockMarketData: bool | None = None
+    sampleCount: int | None = Field(default=None, ge=1, le=8)
+    minConfidence: float | None = Field(default=None, ge=0, le=1)
+    maxBandWidthPct: float | None = Field(default=None, ge=0.05, le=20)
+    maxForecastDrawdownPct: float | None = Field(default=None, ge=0.05, le=20)
+    minHitRate: float | None = Field(default=None, ge=0, le=1)
+    maxMape: float | None = Field(default=None, ge=0.001, le=1)
+    requireMetricsTradeable: bool | None = None
+    takeProfitFraction: float | None = Field(default=None, ge=0.1, le=2)
+    topKEntries: int | None = Field(default=None, ge=1, le=10)
+    regimeMaxVolPct: float | None = Field(default=None, ge=0.1, le=20)
+    regimeMinTrendPct: float | None = Field(default=None, ge=0, le=5)
     risk: RiskPatch | None = None
 
     @field_validator("symbols")
@@ -40,7 +51,6 @@ class SettingsPatch(BaseModel):
             raise ValueError("symbols must contain at least one ticker")
         if len(cleaned) > 30:
             raise ValueError("symbols limited to 30 tickers")
-        # de-dupe preserving order
         seen: set[str] = set()
         out: list[str] = []
         for s in cleaned:
@@ -81,6 +91,17 @@ def settings_public(settings) -> dict[str, Any]:
         "lookbackBars": settings.lookback_bars,
         "predLen": settings.pred_len,
         "mockMarketData": False,
+        "sampleCount": settings.sample_count,
+        "minConfidence": settings.min_confidence,
+        "maxBandWidthPct": settings.max_band_width_pct,
+        "maxForecastDrawdownPct": settings.max_forecast_drawdown_pct,
+        "minHitRate": settings.min_hit_rate,
+        "maxMape": settings.max_mape,
+        "requireMetricsTradeable": settings.require_metrics_tradeable,
+        "takeProfitFraction": settings.take_profit_fraction,
+        "topKEntries": settings.top_k_entries,
+        "regimeMaxVolPct": settings.regime_max_vol_pct,
+        "regimeMinTrendPct": settings.regime_min_trend_pct,
         "risk": {
             "maxPositionSize": settings.max_position_size,
             "maxPortfolioExposure": settings.max_portfolio_exposure,
@@ -95,38 +116,34 @@ def apply_settings_patch(state, patch: SettingsPatch) -> dict[str, Any]:
     s = state.settings
     changed: list[str] = []
 
+    def _set(attr: str, value: Any, label: str) -> None:
+        if value is not None and getattr(s, attr) != value:
+            setattr(s, attr, value)
+            changed.append(label)
+
     if patch.symbols is not None:
         s.trade_symbols = ",".join(patch.symbols)
         state.sync_symbols(patch.symbols)
         changed.append("symbols")
 
-    if patch.dryRun is not None and patch.dryRun != s.dry_run:
-        s.dry_run = patch.dryRun
-        changed.append("dryRun")
-
-    if patch.strategy is not None and patch.strategy != s.strategy:
-        s.strategy = patch.strategy
-        changed.append("strategy")
-
-    if patch.signalThresholdPct is not None and patch.signalThresholdPct != s.signal_threshold_pct:
-        s.signal_threshold_pct = patch.signalThresholdPct
-        changed.append("signalThresholdPct")
-
-    if patch.tradeIntervalSeconds is not None and patch.tradeIntervalSeconds != s.trade_interval_seconds:
-        s.trade_interval_seconds = patch.tradeIntervalSeconds
-        changed.append("tradeIntervalSeconds")
-
-    if patch.barTimeframe is not None and patch.barTimeframe != s.bar_timeframe:
-        s.bar_timeframe = patch.barTimeframe
-        changed.append("barTimeframe")
-
-    if patch.lookbackBars is not None and patch.lookbackBars != s.lookback_bars:
-        s.lookback_bars = patch.lookbackBars
-        changed.append("lookbackBars")
-
-    if patch.predLen is not None and patch.predLen != s.pred_len:
-        s.pred_len = patch.predLen
-        changed.append("predLen")
+    _set("dry_run", patch.dryRun, "dryRun")
+    _set("strategy", patch.strategy, "strategy")
+    _set("signal_threshold_pct", patch.signalThresholdPct, "signalThresholdPct")
+    _set("trade_interval_seconds", patch.tradeIntervalSeconds, "tradeIntervalSeconds")
+    _set("bar_timeframe", patch.barTimeframe, "barTimeframe")
+    _set("lookback_bars", patch.lookbackBars, "lookbackBars")
+    _set("pred_len", patch.predLen, "predLen")
+    _set("sample_count", patch.sampleCount, "sampleCount")
+    _set("min_confidence", patch.minConfidence, "minConfidence")
+    _set("max_band_width_pct", patch.maxBandWidthPct, "maxBandWidthPct")
+    _set("max_forecast_drawdown_pct", patch.maxForecastDrawdownPct, "maxForecastDrawdownPct")
+    _set("min_hit_rate", patch.minHitRate, "minHitRate")
+    _set("max_mape", patch.maxMape, "maxMape")
+    _set("require_metrics_tradeable", patch.requireMetricsTradeable, "requireMetricsTradeable")
+    _set("take_profit_fraction", patch.takeProfitFraction, "takeProfitFraction")
+    _set("top_k_entries", patch.topKEntries, "topKEntries")
+    _set("regime_max_vol_pct", patch.regimeMaxVolPct, "regimeMaxVolPct")
+    _set("regime_min_trend_pct", patch.regimeMinTrendPct, "regimeMinTrendPct")
 
     if patch.mockMarketData is True:
         raise ValueError(
@@ -138,14 +155,8 @@ def apply_settings_patch(state, patch: SettingsPatch) -> dict[str, Any]:
 
     if patch.risk is not None:
         r = patch.risk
-        if r.maxPositionSize is not None and r.maxPositionSize != s.max_position_size:
-            s.max_position_size = r.maxPositionSize
-            changed.append("maxPositionSize")
-        if r.maxPortfolioExposure is not None and r.maxPortfolioExposure != s.max_portfolio_exposure:
-            s.max_portfolio_exposure = r.maxPortfolioExposure
-            changed.append("maxPortfolioExposure")
-        if r.stopLossPct is not None and r.stopLossPct != s.stop_loss_pct:
-            s.stop_loss_pct = r.stopLossPct
-            changed.append("stopLossPct")
+        _set("max_position_size", r.maxPositionSize, "maxPositionSize")
+        _set("max_portfolio_exposure", r.maxPortfolioExposure, "maxPortfolioExposure")
+        _set("stop_loss_pct", r.stopLossPct, "stopLossPct")
 
     return {"changed": changed, "settings": settings_public(s)}

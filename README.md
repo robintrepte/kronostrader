@@ -9,11 +9,20 @@ Automated paper-trading stack: **Kronos** price forecasts → strategy/risk laye
 | Service | Role |
 |---------|------|
 | `apps/inference` | FastAPI + Kronos (`NeoQuasar/Kronos-small\|base`) |
-| `apps/trader` | Loop: market data → forecast → strategy → risk → Alpaca; WS fanout |
-| `apps/dashboard` | Next.js live UI (candles + gold forecast overlay) |
+| `apps/trader` | Loop: market data → forecast → strict strategy → exits → top-K → Alpaca; WS fanout |
+| `apps/dashboard` | Next.js live UI (candles, Edge metrics panel, gold forecast overlay) |
 | Postgres / Redis | Persistence + pub/sub |
 
-Strategy code lives in `apps/trader/app/strategies/` and is deliberately separate from model inference.
+Default strategy is `strict_forecast` (path + confidence bands + forecast-quality gate + regime + ranked top-K entries; mostly HOLD). Legacy `forecast_momentum` remains available.
+
+Cost-aware backtest:
+
+```powershell
+cd apps/trader
+.\.venv\Scripts\python.exe scripts\run_backtest.py --symbols "BTC/USD,SPY" --max-steps 24
+```
+
+Results land in `apps/trader/data/backtest_last.json` and on `GET /api/backtest/last` (Edge panel on the desk).
 
 ## Prerequisites
 
@@ -79,7 +88,10 @@ See [`.env.example`](.env.example). Important flags:
 | `KRONOS_MODEL_SIZE` | `small` | `small` / `base` / `mini` |
 | `MAX_POSITION_SIZE` | `2000` | Per-symbol notional cap (USD) |
 | `MAX_PORTFOLIO_EXPOSURE` | `25000` | Portfolio notional cap |
-| `STOP_LOSS_PCT` | `2.0` | Blocks new buys when unrealized PnL ≤ −threshold |
+| `STRATEGY` | `strict_forecast` | `strict_forecast` or `forecast_momentum` |
+| `SAMPLE_COUNT` | `4` | Kronos samples per forecast (confidence bands) |
+| `TOP_K_ENTRIES` | `3` | Max new buys per loop cycle |
+| `STOP_LOSS_PCT` | `2.0` | Hard flatten when unrealized PnL ≤ −threshold |
 
 ### Live trading checklist (do not skip)
 

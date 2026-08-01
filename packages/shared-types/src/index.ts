@@ -123,6 +123,42 @@ export interface RiskLimits {
   stopLossPct: number;
 }
 
+export interface SymbolForecastMetrics {
+  symbol?: string;
+  n: number;
+  hitRate: number | null;
+  mape: number | null;
+  mae: number | null;
+  bandCoverage: number | null;
+  errorStreak: number;
+  tradeable: boolean;
+  updatedAt: string;
+}
+
+export interface ForecastMetricsResponse {
+  updatedAt: string;
+  minHitRate: number;
+  maxMape: number;
+  bySymbol: Record<string, SymbolForecastMetrics>;
+}
+
+export interface BacktestResult {
+  ok: boolean;
+  generatedAt?: string;
+  startingCash?: number;
+  endingEquity?: number;
+  netPnl?: number;
+  netPnlPct?: number;
+  maxDrawdownPct?: number;
+  sharpeLike?: number;
+  winRate?: number;
+  tradeCount?: number;
+  avgEdgeBps?: number;
+  perSymbol?: Record<string, { trades: number; pnl: number }>;
+  notes?: string[];
+  message?: string;
+}
+
 export interface TraderSettings {
   symbols: string[];
   dryRun: boolean;
@@ -135,6 +171,17 @@ export interface TraderSettings {
   lookbackBars: number;
   predLen: number;
   mockMarketData: boolean;
+  sampleCount?: number;
+  minConfidence?: number;
+  maxBandWidthPct?: number;
+  maxForecastDrawdownPct?: number;
+  minHitRate?: number;
+  maxMape?: number;
+  requireMetricsTradeable?: boolean;
+  takeProfitFraction?: number;
+  topKEntries?: number;
+  regimeMaxVolPct?: number;
+  regimeMinTrendPct?: number;
   risk: RiskLimits;
   updatedAt?: string;
 }
@@ -149,6 +196,17 @@ export interface SettingsPatch {
   lookbackBars?: number;
   predLen?: number;
   mockMarketData?: boolean;
+  sampleCount?: number;
+  minConfidence?: number;
+  maxBandWidthPct?: number;
+  maxForecastDrawdownPct?: number;
+  minHitRate?: number;
+  maxMape?: number;
+  requireMetricsTradeable?: boolean;
+  takeProfitFraction?: number;
+  topKEntries?: number;
+  regimeMaxVolPct?: number;
+  regimeMinTrendPct?: number;
   risk?: Partial<RiskLimits>;
 }
 
@@ -177,6 +235,20 @@ export interface Snapshot {
   marketDataFeed?: string;
   /** Per-symbol asset class for mixed equity + crypto books */
   assetClasses?: Record<string, AssetClass>;
+  forecastMetrics?: Record<string, SymbolForecastMetrics>;
+  edge?: {
+    strategy: string;
+    strict: boolean;
+    sampleCount: number;
+    topKEntries: number;
+    minConfidence: number;
+    minHitRate: number;
+    takeProfitFraction: number;
+  };
+  lastBacktest?: BacktestResult | null;
+  sampleCount?: number;
+  minConfidence?: number;
+  topKEntries?: number;
   marketErrors?: Record<string, string>;
   inferenceErrors?: Record<string, string>;
 }

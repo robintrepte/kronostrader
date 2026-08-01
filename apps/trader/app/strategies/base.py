@@ -49,7 +49,12 @@ class Strategy(ABC):
     name: str
 
     @abstractmethod
-    def evaluate(self, candles: list[Candle], forecast: list[ForecastPoint]) -> Signal:
+    def evaluate(
+        self,
+        candles: list[Candle],
+        forecast: list[ForecastPoint],
+        **kwargs,
+    ) -> Signal:
         ...
 
 
@@ -61,7 +66,12 @@ class ForecastMomentumStrategy(Strategy):
     def __init__(self, threshold_pct: float = 0.5) -> None:
         self.threshold_pct = threshold_pct
 
-    def evaluate(self, candles: list[Candle], forecast: list[ForecastPoint]) -> Signal:
+    def evaluate(
+        self,
+        candles: list[Candle],
+        forecast: list[ForecastPoint],
+        **kwargs,
+    ) -> Signal:
         if not candles or not forecast:
             return Signal(
                 id=str(uuid4()),
@@ -101,10 +111,24 @@ class ForecastMomentumStrategy(Strategy):
         )
 
 
-def get_strategy(name: str, threshold_pct: float) -> Strategy:
-    strategies = {
-        ForecastMomentumStrategy.name: ForecastMomentumStrategy(threshold_pct),
-    }
-    if name not in strategies:
-        raise ValueError(f"Unknown strategy: {name}. Available: {list(strategies)}")
-    return strategies[name]
+def get_strategy(name: str, threshold_pct: float = 0.5, settings=None) -> Strategy:
+    if name == "strict_forecast":
+        from app.strategies.strict import StrictForecastStrategy
+
+        s = settings
+        return StrictForecastStrategy(
+            threshold_pct=float(getattr(s, "signal_threshold_pct", threshold_pct) if s else threshold_pct),
+            max_band_width_pct=float(getattr(s, "max_band_width_pct", 2.0) if s else 2.0),
+            max_forecast_drawdown_pct=float(
+                getattr(s, "max_forecast_drawdown_pct", 0.4) if s else 0.4
+            ),
+            min_confidence=float(getattr(s, "min_confidence", 0.35) if s else 0.35),
+            require_metrics_tradeable=bool(
+                getattr(s, "require_metrics_tradeable", True) if s else True
+            ),
+        )
+    if name == ForecastMomentumStrategy.name:
+        return ForecastMomentumStrategy(threshold_pct)
+    raise ValueError(
+        f"Unknown strategy: {name}. Available: {[ForecastMomentumStrategy.name, 'strict_forecast']}"
+    )

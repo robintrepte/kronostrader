@@ -81,6 +81,76 @@ async def system_status():
     return await build_system_status()
 
 
+@app.get("/api/metrics/forecasts")
+async def forecast_metrics():
+    from app.forecast_metrics import refresh_all_metrics
+
+    state = get_state()
+    s = state.settings
+    state.forecast_metrics = refresh_all_metrics(
+        state.forecast_history,
+        state.candles,
+        list(s.symbols),
+        min_hit_rate=s.min_hit_rate,
+        max_mape=s.max_mape,
+    )
+    return {
+        "updatedAt": datetime.now(timezone.utc).isoformat(),
+        "minHitRate": s.min_hit_rate,
+        "maxMape": s.max_mape,
+        "bySymbol": state.forecast_metrics,
+    }
+
+
+@app.get("/api/backtest/last")
+async def backtest_last():
+    from app.backtest.engine import load_backtest_result
+
+    state = get_state()
+    data = state.last_backtest or load_backtest_result()
+    if not data:
+        return {"ok": False, "message": "No backtest result yet. Run scripts/run_backtest.py"}
+    return data
+
+
+@app.post("/api/backtest/run")
+async def backtest_run(
+    symbols: str = Query("BTC/USD,SPY"),
+    max_steps: int = Query(16, ge=4, le=80),
+    use_inference: bool = Query(True),
+):
+    """Run a short cost-aware backtest (can take a while with inference)."""
+    from app.backtest.engine import BacktestConfig, run_backtest
+
+    state = get_state()
+    settings = state.settings
+    cfg = BacktestConfig(
+        symbols=[s.strip() for s in symbols.split(",") if s.strip()],
+        max_steps=max_steps,
+        use_inference=use_inference,
+        sample_count=min(2, settings.sample_count),
+    )
+    result = await run_backtest(settings, cfg)
+    payload = {
+        "ok": result.ok,
+        "generatedAt": result.generatedAt,
+        "startingCash": result.startingCash,
+        "endingEquity": result.endingEquity,
+        "netPnl": result.netPnl,
+        "netPnlPct": result.netPnlPct,
+        "maxDrawdownPct": result.maxDrawdownPct,
+        "sharpeLike": result.sharpeLike,
+        "winRate": result.winRate,
+        "tradeCount": result.tradeCount,
+        "avgEdgeBps": result.avgEdgeBps,
+        "perSymbol": result.perSymbol,
+        "config": result.config,
+        "notes": result.notes,
+    }
+    state.last_backtest = payload
+    return payload
+
+
 @app.get("/api/symbols/search")
 async def symbols_search(
     q: str = Query("", max_length=32),
