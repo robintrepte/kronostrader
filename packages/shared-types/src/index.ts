@@ -63,6 +63,8 @@ export interface Signal {
   lastClose?: number;
 }
 
+export type AssetClass = "us_equity" | "crypto";
+
 export interface Position {
   symbol: string;
   qty: number;
@@ -72,6 +74,7 @@ export interface Position {
   marketValue: number;
   unrealizedPnl: number;
   unrealizedPnlPct: number;
+  assetClass?: AssetClass;
   updatedAt: string;
 }
 
@@ -172,6 +175,8 @@ export interface Snapshot {
   predLen?: number;
   mockMarketData?: boolean;
   marketDataFeed?: string;
+  /** Per-symbol asset class for mixed equity + crypto books */
+  assetClasses?: Record<string, AssetClass>;
   marketErrors?: Record<string, string>;
   inferenceErrors?: Record<string, string>;
 }
@@ -203,6 +208,9 @@ export interface SystemStatus {
     mockMarketData: boolean;
     intervalSeconds: number;
     strategy: string;
+    marketOpen?: boolean;
+    hasEquity?: boolean;
+    hasCrypto?: boolean;
   };
   marketData: {
     ok: boolean;
@@ -213,6 +221,26 @@ export interface SystemStatus {
     lastSuccessBySymbol: Record<string, string>;
     errorsBySymbol: Record<string, string>;
     delayMinutes: number;
+    session?: {
+      isOpen: boolean;
+      nextOpen?: string | null;
+      nextClose?: string | null;
+      source?: string;
+      equity?: {
+        isOpen: boolean;
+        nextOpen?: string | null;
+        nextClose?: string | null;
+        source?: string;
+        watched?: boolean;
+      };
+      crypto?: {
+        isOpen: boolean;
+        nextOpen?: string | null;
+        nextClose?: string | null;
+        source?: string;
+        watched?: boolean;
+      };
+    };
   };
   inference: {
     ok: boolean;

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from app.assets import is_crypto_symbol
+
 
 @dataclass
 class RiskLimits:
@@ -49,13 +51,16 @@ def evaluate_risk(
     room_symbol = max(0.0, limits.max_position_size - existing_notional)
     room_portfolio = max(0.0, limits.max_portfolio_exposure - current_exposure)
 
+    # Ignore leftover dust that can't fund a meaningful fill
+    min_notional = max(10.0, price * 0.0001)
     notional = min(room_symbol, room_portfolio, limits.max_position_size)
-    if notional <= 0:
+    if notional < min_notional:
         return RiskDecision(False, "max position size or portfolio exposure reached", 0.0)
 
-    qty = round(notional / price, 4)
+    decimals = 6 if is_crypto_symbol(symbol) else 4
+    qty = round(notional / price, decimals)
     if qty <= 0:
-        return RiskDecision(False, "computed qty is zero", 0.0)
+        return RiskDecision(False, "max position size or portfolio exposure reached", 0.0)
 
     if side == "sell":
         held = current_positions.get(symbol, 0.0)

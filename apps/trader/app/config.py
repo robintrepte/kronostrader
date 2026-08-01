@@ -24,7 +24,13 @@ class Settings(BaseSettings):
     alpaca_paper: bool = True
     alpaca_live: bool = False
 
-    trade_symbols: str = "AAPL,MSFT,NVDA"
+    trade_symbols: str = (
+        "SPY,QQQ,IWM,SMH,XLF,"
+        "NVDA,TSLA,AAPL,MSFT,AMZN,META,GOOGL,AMD,AVGO,NFLX,"
+        "PLTR,COIN,MU,"
+        "BTC/USD,ETH/USD,SOL/USD,"
+        "JPM,BAC,ORCL"
+    )
     trade_interval_seconds: int = 60
     bar_timeframe: str = "5Min"
     lookback_bars: int = 512
@@ -33,8 +39,8 @@ class Settings(BaseSettings):
     strategy: str = "forecast_momentum"
     signal_threshold_pct: float = 0.5
 
-    max_position_size: float = 1000.0
-    max_portfolio_exposure: float = 5000.0
+    max_position_size: float = 2000.0
+    max_portfolio_exposure: float = 25000.0
     stop_loss_pct: float = 2.0
 
     database_url: str = "postgresql+asyncpg://kronos:kronos@127.0.0.1:5433/kronos"
@@ -56,7 +62,13 @@ class Settings(BaseSettings):
 
     @property
     def symbols(self) -> list[str]:
-        return [s.strip().upper() for s in self.trade_symbols.split(",") if s.strip()]
+        from app.assets import normalize_symbol
+
+        return [
+            normalize_symbol(s)
+            for s in self.trade_symbols.split(",")
+            if s.strip()
+        ]
 
     @property
     def live_trading_enabled(self) -> bool:

@@ -4,6 +4,7 @@ import logging
 from datetime import datetime, timezone
 from uuid import uuid4
 
+from app.assets import asset_class_of, is_crypto_symbol
 from app.config import Settings
 from app.strategies.base import Signal
 
@@ -95,11 +96,13 @@ class Broker:
         from alpaca.trading.requests import MarketOrderRequest
 
         order_side = OrderSide.BUY if side == "buy" else OrderSide.SELL
+        # Crypto supports GTC/IOC only; equities use DAY for the cash session.
+        tif = TimeInForce.GTC if is_crypto_symbol(signal.symbol) else TimeInForce.DAY
         req = MarketOrderRequest(
             symbol=signal.symbol,
             qty=qty,
             side=order_side,
-            time_in_force=TimeInForce.DAY,
+            time_in_force=tif,
         )
         order = self._client.submit_order(req)
         return OrderResult(
@@ -122,17 +125,19 @@ class Broker:
         out = []
         for p in positions:
             qty = float(p.qty)
+            symbol = str(p.symbol)
             out.append(
                 {
-                    "symbol": p.symbol,
+                    "symbol": symbol,
                     "qty": abs(qty),
                     "side": "long" if qty >= 0 else "short",
-                    "avg_entry_price": float(p.avg_entry_price),
-                    "current_price": float(p.current_price),
-                    "market_value": float(p.market_value),
-                    "unrealized_pnl": float(p.unrealized_pl),
-                    "unrealized_pnl_pct": float(p.unrealized_plpc) * 100.0,
-                    "updated_at": datetime.now(timezone.utc).isoformat(),
+                    "avgEntryPrice": float(p.avg_entry_price),
+                    "currentPrice": float(p.current_price),
+                    "marketValue": float(p.market_value),
+                    "unrealizedPnl": float(p.unrealized_pl),
+                    "unrealizedPnlPct": float(p.unrealized_plpc) * 100.0,
+                    "assetClass": asset_class_of(symbol),
+                    "updatedAt": datetime.now(timezone.utc).isoformat(),
                 }
             )
         return out

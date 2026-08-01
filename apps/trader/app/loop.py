@@ -5,11 +5,13 @@ import logging
 from datetime import datetime, timezone
 from uuid import uuid4
 
+from app.assets import partition_symbols
 from app.broker import Broker
 from app.bus import bus
 from app.config import Settings
 from app.db.models import ActivityRow, CandleRow, EquityRow, ForecastRow, OrderRow, PositionRow, SignalRow
 from app.db.session import session_scope
+from app.market_hours import fetch_market_clock, seconds_until
 from app.inference_client import request_forecast
 from app.market_data import fetch_candles
 from app.risk import RiskLimits, evaluate_risk
@@ -95,10 +97,22 @@ async def process_symbol(settings: Settings, broker: Broker, symbol: str) -> Non
     state.note_market_ok(symbol)
     async with state.lock:
         state.candles[symbol] = [_candle_dict(c) for c in candles]
+        if settings.dry_run and state._local_positions:
+            marked = state.rebuild_local_positions()
+        else:
+            marked = None
     last = candles[-1]
     await bus.publish(
         {"type": "candle", "timestamp": datetime.now(timezone.utc).isoformat(), "payload": _candle_dict(last)}
     )
+    if marked is not None:
+        await bus.publish(
+            {
+                "type": "position",
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "payload": marked,
+            }
+        )
 
     try:
         points, raw = await request_forecast(settings, symbol, candles, sample_count=2)
@@ -144,8 +158,6 @@ async def process_symbol(settings: Settings, broker: Broker, symbol: str) -> Non
     await bus.publish(
         {"type": "signal", "timestamp": signal_payload["timestamp"], "payload": signal_payload}
     )
-    entry = state.add_activity("signal", f"{signal.side.upper()} {symbol}: {signal.reason}", symbol, signal_payload)
-    await bus.publish({"type": "activity", "timestamp": entry["timestamp"], "payload": entry})
 
     # Positions / exposure from local dry-run book or broker
     if settings.dry_run:
@@ -161,9 +173,9 @@ async def process_symbol(settings: Settings, broker: Broker, symbol: str) -> Non
     else:
         positions = broker.get_positions()
         current_positions = {p["symbol"]: p["qty"] for p in positions}
-        current_exposure = sum(abs(p["market_value"]) for p in positions)
+        current_exposure = sum(abs(p.get("marketValue", 0.0)) for p in positions)
         match = next((p for p in positions if p["symbol"] == symbol), None)
-        unrealized = match["unrealized_pnl_pct"] if match else None
+        unrealized = match["unrealizedPnlPct"] if match else None
         async with state.lock:
             state.positions = positions
 
@@ -176,6 +188,16 @@ async def process_symbol(settings: Settings, broker: Broker, symbol: str) -> Non
         current_exposure=current_exposure,
         unrealized_pnl_pct=unrealized,
     )
+
+    # Only surface signals that can actually trade (avoids buy+reject spam at caps)
+    if decision.allowed:
+        entry = state.add_activity(
+            "signal",
+            f"{signal.side.upper()} {symbol}: {signal.reason}",
+            symbol,
+            signal_payload,
+        )
+        await bus.publish({"type": "activity", "timestamp": entry["timestamp"], "payload": entry})
 
     async with session_scope() as session:
         for c in candles[-50:]:
@@ -218,22 +240,36 @@ async def process_symbol(settings: Settings, broker: Broker, symbol: str) -> Non
         )
 
         if not decision.allowed:
-            reject = state.add_activity(
-                "risk_reject",
-                f"Risk blocked {signal.side} {symbol}: {decision.reason}",
-                symbol,
-            )
-            await bus.publish({"type": "activity", "timestamp": reject["timestamp"], "payload": reject})
-            session.add(
-                ActivityRow(
-                    id=reject["id"],
-                    kind="risk_reject",
-                    message=reject["message"],
-                    symbol=symbol,
-                    timestamp=datetime.now(timezone.utc),
-                    meta={"reason": decision.reason},
+            # Capacity / flat / hold gates fire every cycle — keep them out of the desk feed
+            quiet_reasons = {
+                "hold signal — no order",
+                "no long position to sell",
+                "max position size or portfolio exposure reached",
+                "computed qty is zero",
+            }
+            if decision.reason not in quiet_reasons:
+                reject = state.add_activity(
+                    "risk_reject",
+                    f"Risk blocked {signal.side} {symbol}: {decision.reason}",
+                    symbol,
                 )
-            )
+                await bus.publish(
+                    {
+                        "type": "activity",
+                        "timestamp": reject["timestamp"],
+                        "payload": reject,
+                    }
+                )
+                session.add(
+                    ActivityRow(
+                        id=reject["id"],
+                        kind="risk_reject",
+                        message=reject["message"],
+                        symbol=symbol,
+                        timestamp=datetime.now(timezone.utc),
+                        meta={"reason": decision.reason},
+                    )
+                )
             return
 
         order = broker.submit_market_order(signal, decision.qty)
@@ -263,35 +299,10 @@ async def process_symbol(settings: Settings, broker: Broker, symbol: str) -> Non
                     state._local_positions[symbol] = new_qty
                 else:
                     state._local_positions[symbol] = max(0.0, qty - order.qty)
-                # Refresh local positions view
-                state.positions = [
-                    {
-                        "symbol": sym,
-                        "qty": q,
-                        "side": "long",
-                        "avgEntryPrice": state._local_avg.get(sym, last.close),
-                        "currentPrice": (state.candles.get(sym) or [{"close": last.close}])[-1]["close"],
-                        "marketValue": q * (state.candles.get(sym) or [{"close": last.close}])[-1]["close"],
-                        "unrealizedPnl": q
-                        * (
-                            (state.candles.get(sym) or [{"close": last.close}])[-1]["close"]
-                            - state._local_avg.get(sym, last.close)
-                        ),
-                        "unrealizedPnlPct": (
-                            (
-                                (state.candles.get(sym) or [{"close": last.close}])[-1]["close"]
-                                - state._local_avg.get(sym, last.close)
-                            )
-                            / state._local_avg.get(sym, last.close)
-                            * 100.0
-                        )
-                        if state._local_avg.get(sym)
-                        else 0.0,
-                        "updatedAt": datetime.now(timezone.utc).isoformat(),
-                    }
-                    for sym, q in state._local_positions.items()
-                    if q > 0
-                ]
+                    if state._local_positions[symbol] <= 0:
+                        state._local_positions.pop(symbol, None)
+                        state._local_avg.pop(symbol, None)
+                state.rebuild_local_positions()
 
         await bus.publish(
             {"type": "order", "timestamp": order_payload["submittedAt"], "payload": order_payload}
@@ -402,6 +413,7 @@ async def trading_loop(settings: Settings) -> None:
     settings = state.settings
     broker = Broker(settings)
     last_dry = settings.dry_run
+    market_was_open: bool | None = None
     state.add_activity(
         "system",
         f"Trader started (paper={settings.use_paper}, dry_run={settings.dry_run}, live={settings.live_trading_enabled})",
@@ -418,7 +430,50 @@ async def trading_loop(settings: Settings) -> None:
             await bus.publish(
                 {"type": "activity", "timestamp": entry["timestamp"], "payload": entry}
             )
-        for symbol in list(settings.symbols):
+
+        clock = await asyncio.to_thread(fetch_market_clock, settings)
+        equity_open = bool(clock.get("isOpen"))
+        equity_syms, crypto_syms = partition_symbols(list(settings.symbols))
+
+        if equity_syms and not equity_open:
+            if market_was_open is not False:
+                nxt = clock.get("nextOpen") or "next session"
+                msg = (
+                    f"US equity market closed — stocks/ETFs paused until {nxt}"
+                    + ("; crypto still trading 24/7" if crypto_syms else "")
+                )
+                entry = state.add_activity(
+                    "system",
+                    msg,
+                    meta={"clock": clock},
+                )
+                await bus.publish(
+                    {"type": "activity", "timestamp": entry["timestamp"], "payload": entry}
+                )
+            market_was_open = False
+            if not crypto_syms:
+                wait = seconds_until(clock.get("nextOpen"))
+                sleep_for = 60.0 if wait is None else min(max(30.0, wait), 300.0)
+                await asyncio.sleep(sleep_for)
+                continue
+        elif equity_syms and market_was_open is False:
+            entry = state.add_activity(
+                "system",
+                "US equity market open — resuming stocks/ETFs",
+                meta={"clock": clock},
+            )
+            await bus.publish(
+                {"type": "activity", "timestamp": entry["timestamp"], "payload": entry}
+            )
+            market_was_open = True
+        elif equity_open:
+            market_was_open = True
+
+        to_process = list(crypto_syms)
+        if equity_open:
+            to_process.extend(equity_syms)
+
+        for symbol in to_process:
             try:
                 await process_symbol(settings, broker, symbol)
             except Exception:

@@ -5,13 +5,14 @@ export function Badge({
   tone = "neutral",
 }: {
   children: ReactNode;
-  tone?: "neutral" | "mint" | "coral" | "gold";
+  tone?: "neutral" | "mint" | "coral" | "gold" | "sky";
 }) {
   const colors: Record<string, string> = {
     neutral: "var(--kronos-muted)",
     mint: "var(--kronos-mint)",
     coral: "var(--kronos-coral)",
     gold: "var(--kronos-gold)",
+    sky: "var(--kronos-sky)",
   };
   return (
     <span

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, type ReactNode } from "react";
-import type { Candle } from "@kronos/shared-types";
+import type { AssetClass, Candle } from "@kronos/shared-types";
 import {
   Combobox,
   ComboboxContent,
@@ -17,22 +17,40 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import {
+  formatPrice,
+  isCryptoSymbol,
+  normalizeSymbol,
+} from "@/lib/assets";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8001";
 
-type Suggestion = { symbol: string; name: string };
+type Suggestion = { symbol: string; name: string; assetClass?: AssetClass };
 
 const POPULAR: Suggestion[] = [
-  { symbol: "AAPL", name: "Apple Inc." },
-  { symbol: "MSFT", name: "Microsoft Corporation" },
-  { symbol: "NVDA", name: "NVIDIA Corporation" },
-  { symbol: "AMZN", name: "Amazon.com Inc." },
-  { symbol: "GOOGL", name: "Alphabet Inc." },
-  { symbol: "META", name: "Meta Platforms Inc." },
-  { symbol: "TSLA", name: "Tesla Inc." },
-  { symbol: "AMD", name: "Advanced Micro Devices" },
-  { symbol: "SPY", name: "SPDR S&P 500 ETF" },
-  { symbol: "QQQ", name: "Invesco QQQ Trust" },
+  { symbol: "BTC/USD", name: "Bitcoin", assetClass: "crypto" },
+  { symbol: "ETH/USD", name: "Ethereum", assetClass: "crypto" },
+  { symbol: "SOL/USD", name: "Solana", assetClass: "crypto" },
+  { symbol: "DOGE/USD", name: "Dogecoin", assetClass: "crypto" },
+  { symbol: "LINK/USD", name: "Chainlink", assetClass: "crypto" },
+  { symbol: "SPY", name: "SPDR S&P 500 ETF", assetClass: "us_equity" },
+  { symbol: "QQQ", name: "Invesco QQQ Trust", assetClass: "us_equity" },
+  { symbol: "IWM", name: "iShares Russell 2000 ETF", assetClass: "us_equity" },
+  { symbol: "SMH", name: "VanEck Semiconductor ETF", assetClass: "us_equity" },
+  { symbol: "NVDA", name: "NVIDIA Corporation", assetClass: "us_equity" },
+  { symbol: "TSLA", name: "Tesla Inc.", assetClass: "us_equity" },
+  { symbol: "AAPL", name: "Apple Inc.", assetClass: "us_equity" },
+  { symbol: "MSFT", name: "Microsoft Corporation", assetClass: "us_equity" },
+  { symbol: "AMZN", name: "Amazon.com Inc.", assetClass: "us_equity" },
+  { symbol: "META", name: "Meta Platforms Inc.", assetClass: "us_equity" },
+  { symbol: "GOOGL", name: "Alphabet Inc.", assetClass: "us_equity" },
+  { symbol: "AMD", name: "Advanced Micro Devices", assetClass: "us_equity" },
+  { symbol: "AVGO", name: "Broadcom Inc.", assetClass: "us_equity" },
+  { symbol: "NFLX", name: "Netflix Inc.", assetClass: "us_equity" },
+  { symbol: "PLTR", name: "Palantir Technologies", assetClass: "us_equity" },
+  { symbol: "COIN", name: "Coinbase Global", assetClass: "us_equity" },
+  { symbol: "JPM", name: "JPMorgan Chase", assetClass: "us_equity" },
+  { symbol: "ORCL", name: "Oracle", assetClass: "us_equity" },
 ];
 
 function Hint({
@@ -49,6 +67,18 @@ function Hint({
       </TooltipTrigger>
       <TooltipContent side="bottom">{label}</TooltipContent>
     </Tooltip>
+  );
+}
+
+function AssetTag({ assetClass }: { assetClass: AssetClass }) {
+  const crypto = assetClass === "crypto";
+  return (
+    <span
+      className="mono text-[9px] uppercase tracking-wider"
+      style={{ color: crypto ? "var(--sky)" : "var(--muted)" }}
+    >
+      {crypto ? "CRYPTO" : "EQ"}
+    </span>
   );
 }
 
@@ -112,7 +142,7 @@ export function SymbolStrip({
   }, [open, draft, symbols]);
 
   const pick = async (ticker: string) => {
-    const sym = ticker.trim().toUpperCase();
+    const sym = normalizeSymbol(ticker);
     if (!sym) return;
     if (symbols.includes(sym)) {
       setError(`${sym} is already watched`);
@@ -158,19 +188,24 @@ export function SymbolStrip({
       <div className="-mx-1 flex items-stretch gap-2 overflow-x-auto px-1 pb-1">
         {symbols.map((s) => {
           const isActive = s === active;
+          const crypto = isCryptoSymbol(s);
           const c = candles[s];
           const px = c?.[c.length - 1]?.close;
+          const accent = crypto ? "var(--sky)" : "var(--gold)";
           return (
             <div
               key={s}
               className="group relative mono shrink-0 rounded-md border text-left transition"
               style={{
-                borderColor: isActive ? "var(--gold)" : "var(--border)",
+                borderColor: isActive ? accent : "var(--border)",
                 background: isActive
-                  ? "color-mix(in srgb, var(--gold) 12%, var(--panel))"
+                  ? `color-mix(in srgb, ${accent} 12%, var(--panel))`
                   : "var(--panel)",
                 color: "var(--foreground)",
-                minWidth: 96,
+                minWidth: 104,
+                boxShadow: crypto
+                  ? `inset 3px 0 0 ${isActive ? accent : "color-mix(in srgb, var(--sky) 55%, transparent)"}`
+                  : undefined,
               }}
             >
               <button
@@ -179,11 +214,14 @@ export function SymbolStrip({
                 disabled={busy}
                 className="w-full px-3 py-2.5 pr-8 text-left sm:py-2"
               >
-                <div className="text-[10px] text-[var(--muted)] sm:text-xs">
-                  {s}
+                <div className="flex items-center gap-1.5">
+                  <span className="text-[10px] text-[var(--muted)] sm:text-xs">
+                    {s}
+                  </span>
+                  <AssetTag assetClass={crypto ? "crypto" : "us_equity"} />
                 </div>
                 <div className="text-sm">
-                  {px != null ? px.toFixed(2) : "—"}
+                  {px != null ? formatPrice(px, s) : "—"}
                 </div>
               </button>
               <Hint label={`Remove ${s} from watchlist`}>
@@ -214,7 +252,7 @@ export function SymbolStrip({
             setDraft(
               String(value)
                 .toUpperCase()
-                .replace(/[^A-Z0-9.\- ]/g, ""),
+                .replace(/[^A-Z0-9.\-\/ ]/g, ""),
             );
           }}
           onValueChange={(item) => {
@@ -234,7 +272,7 @@ export function SymbolStrip({
           autoHighlight
           disabled={busy}
         >
-          <Hint label="Search and add a ticker">
+          <Hint label="Search stocks, ETFs, or crypto pairs (e.g. BTC/USD)">
             <ComboboxTrigger
               showIcon={false}
               disabled={busy}
@@ -247,28 +285,38 @@ export function SymbolStrip({
 
           <ComboboxContent side="bottom" align="start" className="mono">
             <ComboboxInput
-              placeholder="Search ticker or name…"
+              placeholder="Search ticker, BTC, or name…"
               disabled={busy}
               autoComplete="off"
               maxLength={32}
             />
             <ComboboxStatus>
-              {loadingSuggest ? "Searching…" : "↑↓ move · Enter add · Esc close"}
+              {loadingSuggest
+                ? "Searching…"
+                : "↑↓ move · Enter add · Esc close · crypto = slash pairs"}
             </ComboboxStatus>
             <ComboboxEmpty>
-              {loadingSuggest ? "Searching…" : "No matches — try another query"}
+              {loadingSuggest ? "Searching…" : "No matches — try BTC or BTC/USD"}
             </ComboboxEmpty>
             <ComboboxList>
-              {(item: Suggestion) => (
-                <ComboboxItem key={item.symbol} value={item}>
-                  <span className="pr-6 text-sm text-[var(--foreground)]">
-                    {item.symbol}
-                  </span>
-                  <span className="line-clamp-1 pr-6 text-[10px] text-[var(--muted)]">
-                    {item.name}
-                  </span>
-                </ComboboxItem>
-              )}
+              {(item: Suggestion) => {
+                const cls =
+                  item.assetClass ??
+                  (isCryptoSymbol(item.symbol) ? "crypto" : "us_equity");
+                return (
+                  <ComboboxItem key={item.symbol} value={item}>
+                    <span className="flex items-center gap-2 pr-6">
+                      <span className="text-sm text-[var(--foreground)]">
+                        {item.symbol}
+                      </span>
+                      <AssetTag assetClass={cls} />
+                    </span>
+                    <span className="line-clamp-1 pr-6 text-[10px] text-[var(--muted)]">
+                      {item.name}
+                    </span>
+                  </ComboboxItem>
+                );
+              }}
             </ComboboxList>
           </ComboboxContent>
         </Combobox>

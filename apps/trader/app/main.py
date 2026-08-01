@@ -87,12 +87,14 @@ async def symbols_search(
     limit: int = Query(12, ge=1, le=30),
     exclude: str = Query("", description="Comma-separated tickers to hide"),
 ):
+    from app.assets import normalize_symbol
+
     settings = get_state().settings
-    excluded = {s.strip().upper() for s in exclude.split(",") if s.strip()}
+    excluded = {normalize_symbol(s) for s in exclude.split(",") if s.strip()}
     results = await asyncio.to_thread(
         search_symbols, settings, q, limit=limit, exclude=excluded
     )
-    return {"query": q.strip().upper(), "results": results}
+    return {"query": normalize_symbol(q) if q.strip() else "", "results": results}
 
 
 @app.get("/api/settings")

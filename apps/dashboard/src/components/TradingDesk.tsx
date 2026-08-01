@@ -10,6 +10,7 @@ import {
 } from "react";
 import type {
   ActivityLogEntry,
+  AssetClass,
   Candle,
   EquityPoint,
   Forecast,
@@ -43,13 +44,44 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
+import {
+  formatPrice,
+  isCryptoSymbol,
+  normalizeSymbol,
+} from "@/lib/assets";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8001";
 const WS_URL = process.env.NEXT_PUBLIC_WS_URL ?? "ws://localhost:8001/ws";
 
 const emptySnapshot: Snapshot = {
-  symbols: ["AAPL", "MSFT", "NVDA"],
-  selectedSymbol: "AAPL",
+  symbols: [
+    "SPY",
+    "QQQ",
+    "IWM",
+    "SMH",
+    "XLF",
+    "NVDA",
+    "TSLA",
+    "AAPL",
+    "MSFT",
+    "AMZN",
+    "META",
+    "GOOGL",
+    "AMD",
+    "AVGO",
+    "NFLX",
+    "PLTR",
+    "COIN",
+    "MU",
+    "ARM",
+    "INTC",
+    "HOOD",
+    "JPM",
+    "BAC",
+    "CRM",
+    "ORCL",
+  ],
+  selectedSymbol: "SPY",
   candles: {},
   forecasts: {},
   forecastHistory: {},
@@ -85,6 +117,17 @@ function formatUsd(n: number) {
   });
 }
 
+function formatAge(ms: number): string {
+  if (!Number.isFinite(ms) || ms < 0) return "—";
+  const mins = Math.floor(ms / 60_000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 48) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  return `${days}d ago`;
+}
+
 function formatPct(n: number) {
   const sign = n > 0 ? "+" : "";
   return `${sign}${n.toFixed(2)}%`;
@@ -93,7 +136,7 @@ function formatPct(n: number) {
 export function TradingDesk() {
   const { theme, toggle: toggleTheme } = useTheme();
   const [snap, setSnap] = useState<Snapshot>(emptySnapshot);
-  const [symbol, setSymbol] = useState("AAPL");
+  const [symbol, setSymbol] = useState("SPY");
   const [bootstrapped, setBootstrapped] = useState(false);
   const [chartHeight, setChartHeight] = useState(440);
   const [visibleBars, setVisibleBars] = useState(120);
@@ -165,6 +208,12 @@ export function TradingDesk() {
 
   const { connected } = useTraderSocket(WS_URL, onEvent);
 
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  useEffect(() => {
+    const id = window.setInterval(() => setNowMs(Date.now()), 60_000);
+    return () => window.clearInterval(id);
+  }, []);
+
   const candles: Candle[] = snap.candles[symbol] ?? [];
   const forecast: Forecast | null = snap.forecasts[symbol] ?? null;
   const forecastHistory = snap.forecastHistory?.[symbol] ?? [];
@@ -172,6 +221,9 @@ export function TradingDesk() {
   const prev = candles[candles.length - 2];
   const changePct =
     last && prev ? ((last.close - prev.close) / prev.close) * 100 : 0;
+  const lastCandleAge = last
+    ? formatAge(nowMs - new Date(last.timestamp).getTime())
+    : null;
 
   const equityPath = useMemo(() => buildEquityPath(snap.equity), [snap.equity]);
 
@@ -243,12 +295,16 @@ export function TradingDesk() {
       const cleaned = [
         ...new Set(
           next
-            .map((s) => s.trim().toUpperCase())
-            .filter((s) => /^[A-Z][A-Z0-9.\-]{0,9}$/.test(s)),
+            .map((s) => normalizeSymbol(s))
+            .filter(
+              (s) =>
+                /^[A-Z][A-Z0-9.\-]{0,9}$/.test(s) ||
+                /^[A-Z0-9]{2,10}\/[A-Z0-9]{2,10}$/.test(s),
+            ),
         ),
       ];
       if (!cleaned.length) {
-        throw new Error("Keep at least one valid ticker");
+        throw new Error("Keep at least one valid ticker or crypto pair");
       }
       const res = await fetch(`${API_URL}/api/settings`, {
         method: "PATCH",
@@ -267,6 +323,12 @@ export function TradingDesk() {
       setSnap((prev) => ({
         ...prev,
         symbols,
+        assetClasses: Object.fromEntries(
+          symbols.map((s) => [
+            s,
+            (isCryptoSymbol(s) ? "crypto" : "us_equity") as AssetClass,
+          ]),
+        ),
         candles: Object.fromEntries(
           symbols.map((s) => [s, prev.candles[s] ?? []]),
         ),
@@ -299,6 +361,7 @@ export function TradingDesk() {
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <SystemStatusLight wsConnected={connected} />
+            <MarketSessionBadge />
             <Hint
               label={
                 snap.live
@@ -315,11 +378,11 @@ export function TradingDesk() {
                 <Badge tone="gold">DRY RUN</Badge>
               </Hint>
             )}
-            <Hint label="Live Alpaca market data feed for candles.">
-              <Badge tone="mint">
-                REAL {(snap.marketDataFeed || "iex").toUpperCase()}
-              </Badge>
-            </Hint>
+            <FeedBadge
+              symbol={symbol}
+              feed={snap.marketDataFeed}
+              symbols={snap.symbols}
+            />
             <Hint label="Largest dollar notional allowed for one symbol.">
               <Badge tone="neutral">
                 max pos {formatUsd(snap.risk.maxPositionSize)}
@@ -355,17 +418,31 @@ export function TradingDesk() {
 
         <div className="grid grid-cols-1 gap-3 lg:gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(280px,340px)]">
           <Panel
-            title={`${symbol} · Candles + Kronos forecast`}
+            title={`${symbol}${isCryptoSymbol(symbol) ? " · CRYPTO" : ""} · Candles + Kronos forecast`}
             action={
               last ? (
-                <span
-                  className="mono text-xs sm:text-sm"
-                  style={{
-                    color: changePct >= 0 ? "var(--mint)" : "var(--coral)",
-                  }}
-                >
-                  {last.close.toFixed(2)} ({formatPct(changePct)})
-                </span>
+                <div className="mono text-right text-xs sm:text-sm">
+                  <div
+                    style={{
+                      color: changePct >= 0 ? "var(--mint)" : "var(--coral)",
+                    }}
+                  >
+                    {formatPrice(last.close, symbol)} ({formatPct(changePct)})
+                  </div>
+                  <Hint
+                    label={
+                      isCryptoSymbol(symbol)
+                        ? `Last bar ${new Date(last.timestamp).toLocaleString()}. Alpaca crypto spot is 24/7 — bars keep printing nights and weekends.`
+                        : `Last bar ${new Date(last.timestamp).toLocaleString()}. Free Alpaca IEX is delayed (~${snap.marketDataFeed === "iex" ? "15–20" : "0"} min) and does not print new bars while the US equity session is closed (nights/weekends).`
+                    }
+                  >
+                    <span className="text-[10px] text-[var(--muted)]">
+                      bar {lastCandleAge}
+                      {isCryptoSymbol(symbol) ? " · crypto 24/7" : ""}
+                      {snap.dryRun ? " · dry marks use bar close" : ""}
+                    </span>
+                  </Hint>
+                </div>
               ) : (
                 <span className="mono text-xs text-[var(--muted)]">
                   {bootstrapped ? "waiting for data" : "loading…"}
@@ -758,6 +835,99 @@ function ToolbarBtn({
   );
 }
 
+function FeedBadge({
+  symbol,
+  feed,
+  symbols,
+}: {
+  symbol: string;
+  feed?: string;
+  symbols: string[];
+}) {
+  const hasCrypto = symbols.some(isCryptoSymbol);
+  const hasEquity = symbols.some((s) => !isCryptoSymbol(s));
+  if (isCryptoSymbol(symbol)) {
+    return (
+      <Hint label="Selected symbol uses Alpaca crypto market data (24/7).">
+        <Badge tone="sky">CRYPTO FEED</Badge>
+      </Hint>
+    );
+  }
+  const label =
+    hasCrypto && hasEquity
+      ? `REAL ${(feed || "iex").toUpperCase()}+CRYPTO`
+      : `REAL ${(feed || "iex").toUpperCase()}`;
+  return (
+    <Hint label="Live Alpaca market data feed for candles (stocks/ETFs use IEX/SIP; crypto is separate).">
+      <Badge tone="mint">{label}</Badge>
+    </Hint>
+  );
+}
+
+function MarketSessionBadge() {
+  const { status } = useSystemStatus(5000);
+  const session = status?.marketData.session;
+  const equity = session?.equity;
+  const crypto = session?.crypto;
+  const hasEquity = equity?.watched ?? status?.trader.hasEquity;
+  const hasCrypto = crypto?.watched ?? status?.trader.hasCrypto;
+
+  if (!session) {
+    return (
+      <Hint label="Waiting for Alpaca market clock…">
+        <Badge tone="neutral">SESSION …</Badge>
+      </Hint>
+    );
+  }
+
+  if (hasCrypto && !hasEquity) {
+    return (
+      <Hint label="Crypto spot trades 24/7 on Alpaca. No US cash-session pause.">
+        <Badge tone="sky">CRYPTO 24/7</Badge>
+      </Hint>
+    );
+  }
+
+  if (hasCrypto && hasEquity && equity && !equity.isOpen) {
+    const next = equity.nextOpen
+      ? new Date(equity.nextOpen).toLocaleString()
+      : "next equity session";
+    return (
+      <Hint
+        label={`US stocks/ETFs paused until ${next}. Crypto pairs keep trading.`}
+      >
+        <Badge tone="sky">EQUITY CLOSED · CRYPTO LIVE</Badge>
+      </Hint>
+    );
+  }
+
+  if (equity?.isOpen || session.isOpen) {
+    const until = (equity?.nextClose || session.nextClose)
+      ? new Date(String(equity?.nextClose || session.nextClose)).toLocaleString()
+      : "session close";
+    return (
+      <Hint
+        label={
+          hasCrypto
+            ? `US equity session open (closes ${until}). Crypto also live 24/7.`
+            : `US equity session is open. Closes ${until}.`
+        }
+      >
+        <Badge tone="mint">SESSION OPEN</Badge>
+      </Hint>
+    );
+  }
+
+  const next = (equity?.nextOpen || session.nextOpen)
+    ? new Date(String(equity?.nextOpen || session.nextOpen)).toLocaleString()
+    : "next session";
+  return (
+    <Hint label={`Trading loop paused for equities. Next open ${next}.`}>
+      <Badge tone="gold">SESSION CLOSED</Badge>
+    </Hint>
+  );
+}
+
 function ErrorBanner({ connected }: { connected: boolean }) {
   const { status, fetchError } = useSystemStatus(5000);
   const issues: string[] = [];
@@ -776,24 +946,83 @@ function ErrorBanner({ connected }: { connected: boolean }) {
     issues.push("Alpaca API keys are missing.");
   }
   for (const issue of status?.issues ?? []) {
+    const low = issue.toLowerCase();
+    if (low.includes("market closed") || low.includes("equity market closed")) {
+      continue;
+    }
     if (!issues.includes(issue)) issues.push(issue);
   }
-  if (!issues.length) return null;
+  const equity = status?.marketData.session?.equity;
+  const crypto = status?.marketData.session?.crypto;
+  const hasEquity = equity?.watched ?? status?.trader.hasEquity ?? true;
+  const hasCrypto = crypto?.watched ?? status?.trader.hasCrypto ?? false;
+  const equityClosed = hasEquity && equity?.isOpen === false;
+  const sessionClosedOnly =
+    status?.marketData.session?.isOpen === false && !hasCrypto;
+  const showEquityPaused = equityClosed || sessionClosedOnly;
+  if (!issues.length && !showEquityPaused) return null;
   return (
-    <div
-      role="alert"
-      className="rounded-md border border-[var(--coral)]/50 bg-[color-mix(in_srgb,var(--coral)_10%,var(--panel))] px-3 py-2.5"
-    >
-      <p className="mono mb-1 text-[10px] uppercase tracking-wider text-[var(--coral)]">
-        Errors
-      </p>
-      <ul className="space-y-1">
-        {issues.slice(0, 6).map((issue) => (
-          <li key={issue} className="text-sm leading-snug text-[var(--foreground)]">
-            {issue}
-          </li>
-        ))}
-      </ul>
+    <div className="space-y-2">
+      {showEquityPaused && (
+        <div
+          role="status"
+          className={
+            hasCrypto
+              ? "rounded-md border border-[var(--sky)]/40 bg-[color-mix(in_srgb,var(--sky)_10%,var(--panel))] px-3 py-2.5"
+              : "rounded-md border border-[var(--gold)]/40 bg-[color-mix(in_srgb,var(--gold)_10%,var(--panel))] px-3 py-2.5"
+          }
+        >
+          <p
+            className="mono mb-0.5 text-[10px] uppercase tracking-wider"
+            style={{ color: hasCrypto ? "var(--sky)" : "var(--gold)" }}
+          >
+            {hasCrypto ? "Equity session closed · crypto live" : "Market closed"}
+          </p>
+          <p className="text-sm text-[var(--foreground)]">
+            {hasCrypto ? (
+              <>
+                Stocks and ETFs are paused until{" "}
+                {equity?.nextOpen || status?.marketData.session?.nextOpen
+                  ? new Date(
+                      String(
+                        equity?.nextOpen || status?.marketData.session?.nextOpen,
+                      ),
+                    ).toLocaleString()
+                  : "the next US equity session"}
+                . Crypto pairs keep forecasting and trading 24/7.
+              </>
+            ) : (
+              <>
+                Trading loop is paused until{" "}
+                {status?.marketData.session?.nextOpen
+                  ? new Date(status.marketData.session.nextOpen).toLocaleString()
+                  : "the next US equity session"}
+                . Forecasts and chart stay live; no new orders.
+              </>
+            )}
+          </p>
+        </div>
+      )}
+      {issues.length > 0 && (
+        <div
+          role="alert"
+          className="rounded-md border border-[var(--coral)]/50 bg-[color-mix(in_srgb,var(--coral)_10%,var(--panel))] px-3 py-2.5"
+        >
+          <p className="mono mb-1 text-[10px] uppercase tracking-wider text-[var(--coral)]">
+            Errors
+          </p>
+          <ul className="space-y-1">
+            {issues.slice(0, 6).map((issue) => (
+              <li
+                key={issue}
+                className="text-sm leading-snug text-[var(--foreground)]"
+              >
+                {issue}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
     </div>
   );
 }
@@ -888,12 +1117,24 @@ function Hint({
 
 function PositionRow({ p }: { p: Position }) {
   const positive = p.unrealizedPnl >= 0;
+  const crypto =
+    p.assetClass === "crypto" || isCryptoSymbol(p.symbol);
   return (
     <li className="flex items-center justify-between gap-2 border-b border-[var(--border)] pb-2 last:border-0">
       <div>
-        <div className="mono text-sm">{p.symbol}</div>
+        <div className="flex items-center gap-1.5">
+          <span className="mono text-sm">{p.symbol}</span>
+          {crypto && (
+            <span className="mono text-[9px] uppercase tracking-wider text-[var(--sky)]">
+              CRYPTO
+            </span>
+          )}
+        </div>
         <div className="mono text-[10px] text-[var(--muted)]">
-          {p.qty} @ {p.avgEntryPrice.toFixed(2)}
+          {p.qty} @ {formatPrice(p.avgEntryPrice, p.symbol)}
+          {p.currentPrice != null
+            ? ` → ${formatPrice(p.currentPrice, p.symbol)}`
+            : ""}
         </div>
       </div>
       <div
@@ -1155,20 +1396,10 @@ function applyEvent(prev: Snapshot, event: WsEvent): Snapshot {
         ...prev,
         activity: [event.payload, ...prev.activity].slice(0, 100),
       };
-    case "signal": {
-      const entry: ActivityLogEntry = {
-        id: event.payload.id,
-        kind: "signal",
-        message: `${event.payload.side.toUpperCase()} ${event.payload.symbol}: ${event.payload.reason}`,
-        symbol: event.payload.symbol,
-        timestamp: event.payload.timestamp,
-        meta: event.payload as unknown as Record<string, unknown>,
-      };
-      return {
-        ...prev,
-        activity: [entry, ...prev.activity].slice(0, 100),
-      };
-    }
+    case "signal":
+      // Activity log already receives signal rows via the "activity" event —
+      // don't duplicate them here.
+      return prev;
     default:
       return prev;
   }

@@ -77,8 +77,8 @@ See [`.env.example`](.env.example). Important flags:
 | `DRY_RUN` | `true` | Log orders without submitting |
 | `MOCK_MARKET_DATA` | `true` | Synthetic OHLCV (no Alpaca keys needed) |
 | `KRONOS_MODEL_SIZE` | `small` | `small` / `base` / `mini` |
-| `MAX_POSITION_SIZE` | `1000` | Per-symbol notional cap (USD) |
-| `MAX_PORTFOLIO_EXPOSURE` | `5000` | Portfolio notional cap |
+| `MAX_POSITION_SIZE` | `2000` | Per-symbol notional cap (USD) |
+| `MAX_PORTFOLIO_EXPOSURE` | `25000` | Portfolio notional cap |
 | `STOP_LOSS_PCT` | `2.0` | Blocks new buys when unrealized PnL ≤ −threshold |
 
 ### Live trading checklist (do not skip)

@@ -22,39 +22,38 @@ function tsMs(value: string): number {
   return new Date(value).getTime();
 }
 
-/** Map a timestamp onto the candle slot axis (linear between neighbors). */
-function xForTime(
+/** Snap a past-forecast timestamp onto the nearest visible candle (no future bleed). */
+function xForHistoryTime(
   t: number,
   candleTimes: number[],
   xCandle: (i: number) => number,
 ): number | null {
   if (!candleTimes.length) return null;
   if (t < candleTimes[0] || t > candleTimes[candleTimes.length - 1]) {
-    // allow slight extrapolation past last candle for still-open forecast tips
-    if (t > candleTimes[candleTimes.length - 1] && candleTimes.length >= 2) {
-      const i = candleTimes.length - 1;
-      const dt = candleTimes[i] - candleTimes[i - 1] || 1;
-      const frac = (t - candleTimes[i]) / dt;
-      if (frac > 2) return null;
-      return xCandle(i) + frac * (xCandle(i) - xCandle(i - 1));
-    }
     return null;
   }
-  let lo = 0;
-  let hi = candleTimes.length - 1;
-  while (lo <= hi) {
-    const mid = (lo + hi) >> 1;
-    const v = candleTimes[mid];
-    if (v === t) return xCandle(mid);
-    if (v < t) lo = mid + 1;
-    else hi = mid - 1;
+  // Nearest candle index
+  let bestI = 0;
+  let bestDt = Math.abs(candleTimes[0] - t);
+  for (let i = 1; i < candleTimes.length; i++) {
+    const dt = Math.abs(candleTimes[i] - t);
+    if (dt < bestDt) {
+      bestDt = dt;
+      bestI = i;
+    }
   }
-  const i1 = Math.max(1, lo);
-  const i0 = i1 - 1;
-  const t0 = candleTimes[i0];
-  const t1 = candleTimes[i1];
-  const frac = t1 === t0 ? 0 : (t - t0) / (t1 - t0);
-  return xCandle(i0) + frac * (xCandle(i1) - xCandle(i0));
+  let bar = 60_000;
+  if (candleTimes.length >= 2) {
+    const deltas = candleTimes
+      .slice(1)
+      .map((v, i) => v - candleTimes[i])
+      .filter((d) => d > 0)
+      .sort((a, b) => a - b);
+    bar = (deltas[Math.floor(deltas.length / 2)] || 60_000) * 0.85;
+  }
+  // Reject matches that are farther than ~0.85 of a bar (wrong series / TZ drift)
+  if (bestDt > bar) return null;
+  return xCandle(bestI);
 }
 
 export function forecastAccuracy(
@@ -270,11 +269,83 @@ export function CandlestickChart({
 
   void liveGeneratedAt;
 
-  const histPrices = histEntries.flatMap((h) => h.points.map((p) => p.close));
+  const showForecast = end === candles.length && forecast.length > 0;
+  const totalSlots = view.length + (showForecast ? forecast.length : 0);
+  const slot = chartW / Math.max(totalSlots, 1);
+  const bodyW = Math.max(1.5, slot * 0.62);
+
+  // Placeholder y-scale inputs — refined after history coords are known
+  const candleTimes = view.map((c) => tsMs(c.timestamp));
+  const lastCandleMs = candleTimes.length
+    ? candleTimes[candleTimes.length - 1]
+    : 0;
+
+  const xCandle = (i: number) => pad.left + i * slot + slot / 2;
+
+  // Build history overlays on realized candles only (never into the live forecast lane).
+  // Prefer anchor-index + offset so series stay aligned even when timestamps drift.
+  const historyPaths = histEntries.map((entry, hi) => {
+    const coords: { x: number; close: number }[] = [];
+    let anchorIdx = -1;
+    if (entry.anchorTimestamp) {
+      const at = tsMs(entry.anchorTimestamp);
+      let bestDt = Infinity;
+      for (let i = 0; i < candleTimes.length; i++) {
+        const dt = Math.abs(candleTimes[i] - at);
+        if (dt < bestDt) {
+          bestDt = dt;
+          anchorIdx = i;
+        }
+      }
+      const medBar =
+        candleTimes.length >= 2
+          ? (() => {
+              const deltas = candleTimes
+                .slice(1)
+                .map((v, i) => v - candleTimes[i])
+                .filter((d) => d > 0)
+                .sort((a, b) => a - b);
+              return deltas[Math.floor(deltas.length / 2)] || 60_000;
+            })()
+          : 60_000;
+      if (bestDt > medBar * 1.1) anchorIdx = -1;
+    }
+
+    entry.points.forEach((p, pi) => {
+      let x: number | null = null;
+      if (anchorIdx >= 0) {
+        const idx = anchorIdx + 1 + pi;
+        if (idx >= 0 && idx < view.length) x = xCandle(idx);
+      } else {
+        const t = tsMs(p.timestamp);
+        if (lastCandleMs && t > lastCandleMs) return;
+        x = xForHistoryTime(t, candleTimes, xCandle);
+      }
+      if (x == null) return;
+      coords.push({ x, close: p.close });
+    });
+
+    const byX = new Map<number, { x: number; close: number }>();
+    for (const c of coords) byX.set(c.x, c);
+    const unique = [...byX.values()].sort((a, b) => a.x - b.x);
+    if (unique.length < 2) return null;
+    const age = histEntries.length <= 1 ? 1 : hi / (histEntries.length - 1);
+    const opacity = 0.28 + age * 0.4;
+    return {
+      id: entry.id,
+      points: unique,
+      opacity,
+      generatedAt: entry.generatedAt,
+    };
+  });
+
+  const histPrices = historyPaths.flatMap((hp) =>
+    hp ? hp.points.map((p) => p.close) : [],
+  );
 
   const allCloses = [
     ...view.flatMap((c) => [c.high, c.low]),
-    ...(end === candles.length
+    ...(showForecast
       ? forecast.flatMap((f) => [
           f.high,
           f.low,
@@ -290,34 +361,19 @@ export function CandlestickChart({
   const yMin = minP - pricePad;
   const yMax = maxP + pricePad;
 
-  const showForecast = end === candles.length && forecast.length > 0;
-  const totalSlots = view.length + (showForecast ? forecast.length : 0);
-  const slot = chartW / Math.max(totalSlots, 1);
-  const bodyW = Math.max(1.5, slot * 0.62);
-
   const y = (price: number) =>
     pad.top + ((yMax - price) / (yMax - yMin || 1)) * chartH;
-  const xCandle = (i: number) => pad.left + i * slot + slot / 2;
-  const candleTimes = view.map((c) => tsMs(c.timestamp));
+
+  const historyDrawn = historyPaths.map((hp) => {
+    if (!hp) return null;
+    const d = hp.points
+      .map((c, i) => `${i === 0 ? "M" : "L"} ${c.x} ${y(c.close)}`)
+      .join(" ");
+    return { id: hp.id, d, opacity: hp.opacity };
+  });
 
   const maxVol = Math.max(...view.map((c) => c.volume), 1);
   const lastIdx = view.length - 1;
-
-  const historyPaths = histEntries.map((entry, hi) => {
-    const coords: { x: number; y: number }[] = [];
-    for (const p of entry.points) {
-      const x = xForTime(tsMs(p.timestamp), candleTimes, xCandle);
-      if (x == null) continue;
-      coords.push({ x, y: y(p.close) });
-    }
-    if (coords.length < 2) return null;
-    const d = coords
-      .map((c, i) => `${i === 0 ? "M" : "L"} ${c.x} ${c.y}`)
-      .join(" ");
-    const age = histEntries.length <= 1 ? 1 : hi / (histEntries.length - 1);
-    const opacity = 0.25 + age * 0.35;
-    return { id: entry.id, d, opacity, generatedAt: entry.generatedAt };
-  });
 
   const forecastPath = showForecast
     ? forecast
@@ -594,7 +650,7 @@ export function CandlestickChart({
           </g>
         ))}
 
-        {historyPaths.map(
+        {historyDrawn.map(
           (hp) =>
             hp && (
               <path

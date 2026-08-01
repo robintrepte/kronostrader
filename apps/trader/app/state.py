@@ -38,6 +38,35 @@ class RuntimeState:
         self.inference_last_ok: dict[str, str] = {}
         self.last_loop_error: str | None = None
 
+    def rebuild_local_positions(self) -> list[dict[str, Any]]:
+        """Mark dry-run book to latest candle closes (entry ≠ mark once prices move)."""
+        now = datetime.now(timezone.utc).isoformat()
+        rows: list[dict[str, Any]] = []
+        for sym, qty in self._local_positions.items():
+            if qty <= 0:
+                continue
+            closes = self.candles.get(sym) or []
+            mark = float(closes[-1]["close"]) if closes else float(self._local_avg.get(sym, 0.0))
+            avg = float(self._local_avg.get(sym, mark) or mark)
+            pnl = qty * (mark - avg)
+            pnl_pct = ((mark - avg) / avg * 100.0) if avg else 0.0
+            rows.append(
+                {
+                    "symbol": sym,
+                    "qty": qty,
+                    "side": "long",
+                    "avgEntryPrice": avg,
+                    "currentPrice": mark,
+                    "marketValue": qty * mark,
+                    "unrealizedPnl": pnl,
+                    "unrealizedPnlPct": pnl_pct,
+                    "assetClass": "crypto" if "/" in sym else "us_equity",
+                    "updatedAt": now,
+                }
+            )
+        self.positions = rows
+        return rows
+
     def sync_symbols(self, symbols: list[str]) -> None:
         for s in symbols:
             self.candles.setdefault(s, [])
@@ -141,6 +170,9 @@ class RuntimeState:
             "predLen": s.pred_len,
             "mockMarketData": False,
             "marketDataFeed": (s.alpaca_data_feed or "iex").lower(),
+            "assetClasses": {
+                sym: ("crypto" if "/" in sym else "us_equity") for sym in s.symbols
+            },
             "marketErrors": dict(self.market_errors),
             "inferenceErrors": dict(self.inference_errors),
         }

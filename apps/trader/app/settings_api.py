@@ -5,6 +5,8 @@ from typing import Any
 
 from pydantic import BaseModel, Field, field_validator
 
+from app.assets import normalize_symbol
+
 ALLOWED_TIMEFRAMES = {"1Min", "5Min", "15Min", "1Hour", "1Day"}
 ALLOWED_STRATEGIES = {"forecast_momentum"}
 
@@ -32,11 +34,12 @@ class SettingsPatch(BaseModel):
     def validate_symbols(cls, value: list[str] | None) -> list[str] | None:
         if value is None:
             return None
-        cleaned = [s.strip().upper() for s in value if s and s.strip()]
+        cleaned = [normalize_symbol(s) for s in value if s and s.strip()]
+        cleaned = [s for s in cleaned if s]
         if not cleaned:
             raise ValueError("symbols must contain at least one ticker")
-        if len(cleaned) > 25:
-            raise ValueError("symbols limited to 25 tickers")
+        if len(cleaned) > 30:
+            raise ValueError("symbols limited to 30 tickers")
         # de-dupe preserving order
         seen: set[str] = set()
         out: list[str] = []

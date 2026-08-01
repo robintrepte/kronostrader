@@ -129,6 +129,45 @@ function StatusTooltipBody({
               v={status.marketData.keysConfigured ? "configured" : "MISSING"}
             />
             <Row k="Healthy" v={status.marketData.ok ? "yes" : "no"} />
+            {status.marketData.session?.equity?.watched !== false && (
+              <Row
+                k="Equity"
+                v={
+                  status.marketData.session?.equity?.isOpen ??
+                  status.marketData.session?.isOpen
+                    ? `OPEN · closes ${
+                        (
+                          status.marketData.session?.equity?.nextClose ||
+                          status.marketData.session?.nextClose
+                        )
+                          ? new Date(
+                              String(
+                                status.marketData.session?.equity?.nextClose ||
+                                  status.marketData.session?.nextClose,
+                              ),
+                            ).toLocaleString()
+                          : "—"
+                      }`
+                    : `CLOSED · opens ${
+                        (
+                          status.marketData.session?.equity?.nextOpen ||
+                          status.marketData.session?.nextOpen
+                        )
+                          ? new Date(
+                              String(
+                                status.marketData.session?.equity?.nextOpen ||
+                                  status.marketData.session?.nextOpen,
+                              ),
+                            ).toLocaleString()
+                          : "—"
+                      }`
+                }
+              />
+            )}
+            {(status.marketData.session?.crypto?.watched ||
+              status.trader.hasCrypto) && (
+              <Row k="Crypto" v="OPEN · 24/7" />
+            )}
             {Object.keys(status.marketData.errorsBySymbol).length > 0 && (
               <Row
                 k="Errors"
