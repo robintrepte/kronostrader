@@ -32,7 +32,16 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8001";
@@ -88,6 +97,7 @@ export function TradingDesk() {
   const [bootstrapped, setBootstrapped] = useState(false);
   const [chartHeight, setChartHeight] = useState(440);
   const [visibleBars, setVisibleBars] = useState(120);
+  const [viewResetKey, setViewResetKey] = useState(0);
   const [showVolume, setShowVolume] = useState(true);
   const [showHistory, setShowHistory] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -305,7 +315,7 @@ export function TradingDesk() {
                 <Badge tone="gold">DRY RUN</Badge>
               </Hint>
             )}
-            <Hint label="Market data is always real Alpaca bars — mock/synthetic is disabled.">
+            <Hint label="Live Alpaca market data feed for candles.">
               <Badge tone="mint">
                 REAL {(snap.marketDataFeed || "iex").toUpperCase()}
               </Badge>
@@ -322,14 +332,14 @@ export function TradingDesk() {
                   : "Switch to dark mode"
               }
             >
-              <button
+              <Button
                 type="button"
-                className="desk-btn !min-h-9 !min-w-9 !px-0"
+                size="icon"
                 onClick={toggleTheme}
                 aria-label="Toggle color theme"
               >
                 {theme === "dark" ? <SunIcon /> : <MoonIcon />}
-              </button>
+              </Button>
             </Hint>
           </div>
         </header>
@@ -364,6 +374,9 @@ export function TradingDesk() {
             }
           >
             <div className="mb-2 flex flex-wrap items-center gap-1.5 sm:gap-2">
+              <span className="mono hidden text-[10px] text-[var(--muted)] lg:inline">
+                Drag zoom · Shift pan · Scroll · Dbl-click reset
+              </span>
               <ToolbarBtn
                 label="Zoom in (fewer bars)"
                 onClick={() =>
@@ -387,29 +400,39 @@ export function TradingDesk() {
               </ToolbarBtn>
               <ToolbarBtn
                 label="Show all candles"
-                onClick={() => setVisibleBars(Math.max(candles.length, 20))}
+                onClick={() => {
+                  setVisibleBars(Math.max(candles.length, 20));
+                  setViewResetKey((k) => k + 1);
+                }}
               >
                 Fit
               </ToolbarBtn>
               <ToolbarBtn
-                label="Reset to last 120 bars"
-                onClick={() => setVisibleBars(120)}
+                label="Reset to last 120 bars (live edge)"
+                onClick={() => {
+                  setVisibleBars(120);
+                  setViewResetKey((k) => k + 1);
+                }}
               >
                 Reset
               </ToolbarBtn>
               <label className="mono flex items-center gap-1.5 text-[10px] text-[var(--muted)] sm:text-[11px]">
                 Height
-                <select
-                  className="desk-input !min-h-8 !w-auto !py-1"
-                  value={chartHeight}
-                  onChange={(e) => setChartHeight(Number(e.target.value))}
+                <Select
+                  value={String(chartHeight)}
+                  onValueChange={(v) => setChartHeight(Number(v))}
                 >
-                  {CHART_HEIGHTS.map((h) => (
-                    <option key={h} value={h}>
-                      {h}px
-                    </option>
-                  ))}
-                </select>
+                  <SelectTrigger size="sm" className="w-[5.5rem]">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {CHART_HEIGHTS.map((h) => (
+                      <SelectItem key={h} value={String(h)}>
+                        {h}px
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </label>
               <label className="mono flex items-center gap-2 text-[10px] text-[var(--muted)] sm:text-[11px]">
                 Volume
@@ -454,6 +477,7 @@ export function TradingDesk() {
                 showVolume={showVolume}
                 visibleBars={visibleBars}
                 onVisibleBarsChange={setVisibleBars}
+                viewResetKey={viewResetKey}
               />
             </div>
           </Panel>
@@ -528,24 +552,27 @@ export function TradingDesk() {
                     label="Strategy"
                     hint="Signal strategy used each loop cycle."
                   >
-                    <select
-                      className="desk-input"
+                    <Select
                       value={form.strategy}
-                      onChange={(e) =>
-                        setForm((f) => ({ ...f, strategy: e.target.value }))
+                      onValueChange={(v) =>
+                        setForm((f) => ({ ...f, strategy: v }))
                       }
                     >
-                      <option value="forecast_momentum">
-                        forecast_momentum
-                      </option>
-                    </select>
+                      <SelectTrigger>
+                        <SelectValue placeholder="Strategy" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="forecast_momentum">
+                          forecast_momentum
+                        </SelectItem>
+                      </SelectContent>
+                    </Select>
                   </Field>
                   <Field
                     label="Signal threshold %"
                     hint="Minimum forecast move before buy/sell."
                   >
-                    <input
-                      className="desk-input"
+                    <Input
                       type="number"
                       step="0.1"
                       min={0}
@@ -562,8 +589,7 @@ export function TradingDesk() {
                     label="Loop interval (s)"
                     hint="Seconds between full symbol cycles."
                   >
-                    <input
-                      className="desk-input"
+                    <Input
                       type="number"
                       min={5}
                       value={form.tradeIntervalSeconds}
@@ -576,29 +602,29 @@ export function TradingDesk() {
                     />
                   </Field>
                   <Field label="Bar timeframe" hint="Candle size from market data.">
-                    <select
-                      className="desk-input"
+                    <Select
                       value={form.barTimeframe}
-                      onChange={(e) =>
-                        setForm((f) => ({
-                          ...f,
-                          barTimeframe: e.target.value,
-                        }))
+                      onValueChange={(v) =>
+                        setForm((f) => ({ ...f, barTimeframe: v }))
                       }
                     >
-                      {TIMEFRAMES.map((tf) => (
-                        <option key={tf} value={tf}>
-                          {tf}
-                        </option>
-                      ))}
-                    </select>
+                      <SelectTrigger>
+                        <SelectValue placeholder="Timeframe" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {TIMEFRAMES.map((tf) => (
+                          <SelectItem key={tf} value={tf}>
+                            {tf}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
                   </Field>
                   <Field
                     label="Lookback bars"
                     hint="History window fetched for inference."
                   >
-                    <input
-                      className="desk-input"
+                    <Input
                       type="number"
                       min={32}
                       value={form.lookbackBars}
@@ -614,8 +640,7 @@ export function TradingDesk() {
                     label="Forecast length"
                     hint="How many bars Kronos predicts ahead."
                   >
-                    <input
-                      className="desk-input"
+                    <Input
                       type="number"
                       min={1}
                       value={form.predLen}
@@ -631,8 +656,7 @@ export function TradingDesk() {
                     label="Max position $"
                     hint="Cap notional per symbol."
                   >
-                    <input
-                      className="desk-input"
+                    <Input
                       type="number"
                       min={1}
                       value={form.maxPositionSize}
@@ -648,8 +672,7 @@ export function TradingDesk() {
                     label="Max exposure $"
                     hint="Cap total portfolio notional."
                   >
-                    <input
-                      className="desk-input"
+                    <Input
                       type="number"
                       min={1}
                       value={form.maxPortfolioExposure}
@@ -665,8 +688,7 @@ export function TradingDesk() {
                     label="Stop-loss %"
                     hint="Exit if unrealized loss exceeds this."
                   >
-                    <input
-                      className="desk-input"
+                    <Input
                       type="number"
                       step="0.1"
                       min={0.1}
@@ -682,20 +704,22 @@ export function TradingDesk() {
                 </div>
 
                 <div className="flex flex-wrap items-center gap-2 pt-1">
-                  <button
+                  <Button
                     type="submit"
-                    className="desk-btn desk-btn-primary min-h-11 flex-1 sm:flex-none"
+                    variant="primary"
+                    size="lg"
+                    className="flex-1 sm:flex-none"
                     disabled={saving}
                   >
                     {saving ? "Saving…" : "Save settings"}
-                  </button>
-                  <button
+                  </Button>
+                  <Button
                     type="button"
-                    className="desk-btn min-h-11"
+                    size="lg"
                     onClick={() => syncForm(snap)}
                   >
                     Reset form
-                  </button>
+                  </Button>
                   {saveMsg && (
                     <span className="mono text-[10px] text-[var(--muted)] sm:text-xs">
                       {saveMsg}
@@ -727,9 +751,9 @@ function ToolbarBtn({
 }) {
   return (
     <Hint label={label}>
-      <button type="button" className="desk-btn !min-h-9 !px-2.5" onClick={onClick}>
+      <Button type="button" size="sm" onClick={onClick}>
         {children}
-      </button>
+      </Button>
     </Hint>
   );
 }
@@ -746,7 +770,7 @@ function ErrorBanner({ connected }: { connected: boolean }) {
     );
   }
   if (status?.marketData.mock) {
-    issues.push("Mock market data flag is on — synthetic candles are blocked.");
+    issues.push("Mock market data is enabled — turn it off in settings.");
   }
   if (status && !status.marketData.keysConfigured) {
     issues.push("Alpaca API keys are missing.");
@@ -761,7 +785,7 @@ function ErrorBanner({ connected }: { connected: boolean }) {
       className="rounded-md border border-[var(--coral)]/50 bg-[color-mix(in_srgb,var(--coral)_10%,var(--panel))] px-3 py-2.5"
     >
       <p className="mono mb-1 text-[10px] uppercase tracking-wider text-[var(--coral)]">
-        Errors — no silent mock fallback
+        Errors
       </p>
       <ul className="space-y-1">
         {issues.slice(0, 6).map((issue) => (
@@ -918,24 +942,24 @@ function ActivityPanel({ activity }: { activity: ActivityLogEntry[] }) {
             </span>
             <div className="flex gap-1.5">
               {canCollapse && (
-                <button
+                <Button
                   type="button"
-                  className="desk-btn !min-h-8 !px-2.5 text-[11px]"
+                  size="sm"
                   onClick={() => setLimit(ACTIVITY_PAGE)}
                 >
                   Show less
-                </button>
+                </Button>
               )}
               {hasMore && (
-                <button
+                <Button
                   type="button"
-                  className="desk-btn !min-h-8 !px-2.5 text-[11px]"
+                  size="sm"
                   onClick={() =>
                     setLimit((n) => Math.min(n + ACTIVITY_PAGE, activity.length))
                   }
                 >
                   Load more
-                </button>
+                </Button>
               )}
             </div>
           </div>
@@ -982,15 +1006,15 @@ function CopyActivityButton({ activity }: { activity: ActivityLogEntry[] }) {
 
   return (
     <Hint label={copied ? "Copied" : "Copy activity log as plain text"}>
-      <button
+      <Button
         type="button"
-        className="desk-btn !min-h-8 !min-w-8 !px-0"
+        size="icon-sm"
         onClick={onCopy}
         disabled={!activity.length}
         aria-label="Copy activity log"
       >
         {copied ? <CheckIcon /> : <CopyIcon />}
-      </button>
+      </Button>
     </Hint>
   );
 }

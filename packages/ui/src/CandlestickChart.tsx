@@ -7,7 +7,6 @@ import {
   useRef,
   useState,
   type PointerEvent as ReactPointerEvent,
-  type WheelEvent as ReactWheelEvent,
 } from "react";
 import type {
   Candle,
@@ -109,6 +108,7 @@ export function CandlestickChart({
   showVolume = true,
   visibleBars,
   onVisibleBarsChange,
+  viewResetKey = 0,
 }: {
   candles: Candle[];
   forecast?: ForecastPoint[];
@@ -118,6 +118,8 @@ export function CandlestickChart({
   showVolume?: boolean;
   visibleBars?: number;
   onVisibleBarsChange?: (n: number) => void;
+  /** Increment to jump view back to the live edge */
+  viewResetKey?: number;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(960);
@@ -126,7 +128,12 @@ export function CandlestickChart({
     i: number;
     kind: "candle" | "forecast";
   } | null>(null);
-  const dragRef = useRef<{ x: number; offset: number } | null>(null);
+  const dragRef = useRef<
+    | { mode: "pan"; x: number; offset: number }
+    | { mode: "brush"; originX: number; currentX: number }
+    | null
+  >(null);
+  const [brush, setBrush] = useState<{ x0: number; x1: number } | null>(null);
 
   const internalVisible = visibleBars ?? DEFAULT_VISIBLE;
   const setVisible = useCallback(
@@ -141,6 +148,10 @@ export function CandlestickChart({
   );
 
   useEffect(() => {
+    setOffsetFromEnd(0);
+  }, [viewResetKey]);
+
+  useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
     const ro = new ResizeObserver((entries) => {
@@ -151,6 +162,42 @@ export function CandlestickChart({
     setWidth(el.clientWidth || 960);
     return () => ro.disconnect();
   }, []);
+
+  // Keep latest zoom inputs for the non-passive wheel listener
+  const wheelRef = useRef({
+    windowSize: DEFAULT_VISIBLE,
+    candlesLength: 0,
+    setVisible,
+  });
+  wheelRef.current = {
+    windowSize: Math.min(
+      Math.max(MIN_VISIBLE, internalVisible),
+      Math.max(candles.length, 1),
+    ),
+    candlesLength: candles.length,
+    setVisible,
+  };
+
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el || !candles.length) return;
+    // React's onWheel is passive — must use native listener to block page scroll
+    const onWheelNative = (e: WheelEvent) => {
+      e.preventDefault();
+      const { windowSize: size, candlesLength, setVisible: zoom } =
+        wheelRef.current;
+      const factor = e.deltaY > 0 ? 1.12 : 0.88;
+      const next = Math.round(size * factor);
+      zoom(next);
+      if (e.deltaY > 0) {
+        setOffsetFromEnd((o) =>
+          Math.min(o, Math.max(0, candlesLength - next)),
+        );
+      }
+    };
+    el.addEventListener("wheel", onWheelNative, { passive: false });
+    return () => el.removeEventListener("wheel", onWheelNative);
+  }, [candles.length]);
 
   const windowSize = Math.min(
     Math.max(MIN_VISIBLE, internalVisible),
@@ -317,22 +364,28 @@ export function CandlestickChart({
     return { p, yy: y(p) };
   });
 
-  const onWheel = (e: ReactWheelEvent) => {
-    e.preventDefault();
-    const factor = e.deltaY > 0 ? 1.12 : 0.88;
-    const next = Math.round(windowSize * factor);
-    setVisible(next);
-    if (e.deltaY > 0) {
-      setOffsetFromEnd((o) => Math.min(o, Math.max(0, candles.length - next)));
-    }
-  };
-
   const onPointerDown = (e: ReactPointerEvent) => {
-    (e.target as Element).setPointerCapture?.(e.pointerId);
-    dragRef.current = { x: e.clientX, offset: offsetFromEnd };
+    (e.currentTarget as Element).setPointerCapture?.(e.pointerId);
+    setHover(null);
+    const rect = containerRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    const localX = e.clientX - rect.left;
+    // Shift-drag pans; plain drag selects a range to zoom into
+    if (e.shiftKey) {
+      dragRef.current = {
+        mode: "pan",
+        x: e.clientX,
+        offset: offsetFromEnd,
+      };
+      setBrush(null);
+      return;
+    }
+    dragRef.current = { mode: "brush", originX: localX, currentX: localX };
+    setBrush({ x0: localX, x1: localX });
   };
   const onPointerMove = (e: ReactPointerEvent) => {
-    if (!dragRef.current) {
+    const drag = dragRef.current;
+    if (!drag) {
       const rect = containerRef.current?.getBoundingClientRect();
       if (!rect) return;
       const x = e.clientX - rect.left;
@@ -350,16 +403,57 @@ export function CandlestickChart({
       }
       return;
     }
-    const dx = e.clientX - dragRef.current.x;
-    const bars = Math.round(-dx / Math.max(slot, 1));
-    const next = Math.max(
-      0,
-      Math.min(maxOffset, dragRef.current.offset + bars),
-    );
-    setOffsetFromEnd(next);
+    if (drag.mode === "pan") {
+      const dx = e.clientX - drag.x;
+      const bars = Math.round(-dx / Math.max(slot, 1));
+      const next = Math.max(
+        0,
+        Math.min(maxOffset, drag.offset + bars),
+      );
+      setOffsetFromEnd(next);
+      return;
+    }
+    const rect = containerRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    const localX = e.clientX - rect.left;
+    drag.currentX = localX;
+    setBrush({ x0: drag.originX, x1: localX });
   };
   const onPointerUp = () => {
+    const drag = dragRef.current;
     dragRef.current = null;
+    setBrush(null);
+    if (!drag || drag.mode !== "brush") return;
+
+    const x0 = Math.min(drag.originX, drag.currentX);
+    const x1 = Math.max(drag.originX, drag.currentX);
+    // Ignore tiny drags (treat as click)
+    if (x1 - x0 < Math.max(slot * 2, 12)) return;
+
+    const i0 = Math.floor((x0 - pad.left) / slot);
+    const i1 = Math.floor((x1 - pad.left) / slot);
+    // Only zoom into candle slots (ignore forecast tail for range end)
+    const lo = Math.max(0, Math.min(i0, i1, view.length - 1));
+    const hi = Math.max(0, Math.min(Math.max(i0, i1), view.length - 1));
+    if (hi < lo || view.length === 0) return;
+
+    let absStart = start + lo;
+    let absEnd = start + hi; // inclusive
+    let nextVisible = absEnd - absStart + 1;
+    if (nextVisible < MIN_VISIBLE) {
+      const mid = Math.floor((absStart + absEnd) / 2);
+      absStart = Math.max(0, mid - Math.floor(MIN_VISIBLE / 2));
+      absEnd = Math.min(candles.length - 1, absStart + MIN_VISIBLE - 1);
+      absStart = Math.max(0, absEnd - MIN_VISIBLE + 1);
+      nextVisible = absEnd - absStart + 1;
+    }
+    setVisible(nextVisible);
+    setOffsetFromEnd(Math.max(0, candles.length - absEnd - 1));
+  };
+
+  const onDoubleClick = () => {
+    setVisible(DEFAULT_VISIBLE);
+    setOffsetFromEnd(0);
   };
 
   const hoverCandle =
@@ -381,16 +475,20 @@ export function CandlestickChart({
         width: "100%",
         height,
         touchAction: "none",
-        cursor: dragRef.current ? "grabbing" : "crosshair",
+        overscrollBehavior: "contain",
+        cursor: dragRef.current?.mode === "pan" ? "grabbing" : "crosshair",
         userSelect: "none",
       }}
-      onWheel={onWheel}
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
+      onDoubleClick={onDoubleClick}
       onPointerLeave={() => {
+        if (!dragRef.current) setHover(null);
+      }}
+      onPointerCancel={() => {
         dragRef.current = null;
-        setHover(null);
+        setBrush(null);
       }}
     >
       {(hoverCandle || hoverForecast) && (
@@ -446,6 +544,24 @@ export function CandlestickChart({
             </>
           )}
         </div>
+      )}
+
+      {brush && (
+        <div
+          aria-hidden
+          style={{
+            position: "absolute",
+            left: Math.min(brush.x0, brush.x1),
+            top: pad.top,
+            width: Math.max(1, Math.abs(brush.x1 - brush.x0)),
+            height: chartH,
+            zIndex: 3,
+            pointerEvents: "none",
+            background: "color-mix(in srgb, var(--gold, #D4A54A) 22%, transparent)",
+            border: `1px solid ${gold}`,
+            borderRadius: 2,
+          }}
+        />
       )}
 
       <svg

@@ -31,7 +31,7 @@ class RuntimeState:
         self._local_positions: dict[str, float] = {}
         self._local_avg: dict[str, float] = {}
 
-        # Health / diagnostics (no silent mock fallbacks)
+        # Health / diagnostics
         self.market_errors: dict[str, str] = {}
         self.market_last_ok: dict[str, str] = {}
         self.inference_errors: dict[str, str] = {}

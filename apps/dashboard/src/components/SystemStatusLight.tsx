@@ -120,8 +120,8 @@ function StatusTooltipBody({
               k="Source"
               v={
                 status.marketData.mock
-                  ? "MOCK (blocked)"
-                  : `Alpaca ${status.marketData.feed.toUpperCase()} · real`
+                  ? "Mock"
+                  : `Alpaca ${status.marketData.feed.toUpperCase()}`
               }
             />
             <Row
