@@ -45,21 +45,15 @@ Most “AI trading” demos stop at a chart. This one closes the loop:
 ## Screenshots
 
 <p align="center">
-  <img src="docs/assets/desk-crypto.png" alt="BTC/USD crypto desk with Kronos forecast bands" width="100%" />
-  <br />
-  <em>Crypto + equities on one desk — 24/7 BTC/ETH/SOL alongside US session names.</em>
-</p>
-
-<p align="center">
   <img src="docs/assets/desk-edge.png" alt="Edge panel — forecast quality metrics and backtest summary" width="100%" />
   <br />
-  <em>Edge panel: measure forecast quality before capital moves.</em>
+  <em>Edge panel: hit-rate, MAPE, tradeable gates, and the last cost-aware backtest.</em>
 </p>
 
 <p align="center">
   <img src="docs/assets/desk-light.png" alt="Kronos Trader desk in light theme" width="100%" />
   <br />
-  <em>Light theme — same desk, different atmosphere.</em>
+  <em>Light theme for daytime desks — same layout, different atmosphere.</em>
 </p>
 
 ## Architecture
